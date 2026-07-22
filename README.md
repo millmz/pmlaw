@@ -16,6 +16,7 @@ Planning. No code yet. Start here:
 | [docs/03-safety-and-permissions.md](docs/03-safety-and-permissions.md) | Hard rules, confirmation flows, audit logging, confidentiality |
 | [docs/04-testing-and-evals.md](docs/04-testing-and-evals.md) | How we know PAM is accurate before trusting it |
 | [docs/05-ask-pam-voice-companion.md](docs/05-ask-pam-voice-companion.md) | Saved build prompt for the "Ask Pam" voice companion — build after the core platform works |
+| [docs/06-roadmap.md](docs/06-roadmap.md) | The working checklist: who does what, in what order, starting today |
 
 ## The one-paragraph plan
 
