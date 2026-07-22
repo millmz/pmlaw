@@ -121,11 +121,12 @@ Multi-user with permission enforcement (see [docs/03](03-safety-and-permissions.
 - Hosting + Postgres: ~$20–50/month.
 - Smokeball API access: confirm pricing/terms in Sprint 0.
 
-## Known risks (ranked)
+## Known risks (ranked, updated after API research — details in [docs/02](02-smokeball-api.md))
 
-1. **Email/correspondence access** — settlement intelligence lives or dies on this. Resolved in Sprint 0; fallbacks in [docs/02](02-smokeball-api.md).
-2. **API access approval/timeline** — developer-program lead time could stall everything; apply immediately.
-3. **Webhook coverage** — if absent for key records, sync freshness degrades to polling intervals; acceptable but must be communicated in answers ("as of …").
-4. **Permission model** — if the API is firm-scoped, multi-user is a real project, not a toggle; v1 stays single-user.
-5. **Data quality in Smokeball** — folder-naming inconsistencies ("Settlement Package" vs variants), tasks without matters, uncategorized deadlines. Mitigation: detection uses fuzzy matching + the eval suite measures real-world hit rate; the health-check surface doubles as a data-hygiene report.
-6. **Vendor overlap** — Smokeball's own AI (Archie) may ship overlapping features; check its roadmap in Sprint 0 and focus LawMan on what it doesn't do (cross-matter reporting, settlement workflows, conversational writes).
+1. **API access approval** — firm API access reportedly requires the Prosper+ plan and goes through the account manager plus a security review; cost and timeline are undocumented. Start the conversation immediately; everything else waits on it.
+2. **Rate limit (5 req/s)** — confirmed low; the sync/cache layer is mandatory, initial full sync must be throttled, and the sync worker needs queuing + backoff.
+3. **Async writes** — all Smokeball POST/PUTs are queued; success response ≠ committed, failures arrive via an `error` webhook. The write flow gains a verify step (propose → confirm → execute → verify) before telling the user "created."
+4. **Email parsing quality** — emails are readable (as downloadable files with to/from metadata), so settlement intelligence is feasible, but "was it sent" verification depends on parsing .eml/.msg files reliably. De-risk with real samples in Sprint 0/3.
+5. **No deep links** — no documented way to link into a Smokeball matter/record; citations fall back to identifiers unless Sprint 0 finds working web-app URL patterns.
+6. **Data quality in Smokeball** — folder-naming inconsistencies ("Settlement Package" vs variants), tasks without matters, uncategorized deadlines. Mitigation: fuzzy matching + the eval suite measures real-world hit rate; the health-check surface doubles as a data-hygiene report.
+7. **Vendor overlap (Archie)** — Smokeball's own AI now does agentic matter Q&A and drafting in Word/Outlook. LawMan stays on ground Archie doesn't occupy: cross-matter reporting, settlement follow-up workflow, conversational writes, morning brief. Re-check each phase.

@@ -41,7 +41,7 @@ The original plan (PDF, preserved intent here) was strong on product definition 
 1. **Adds a sync/cache layer** (the original implied live API calls for everything; firm-wide queries like "matters with no activity in 30 days" are impossible live under API rate limits — see [docs/01](01-build-plan.md)).
 2. **Scopes v1 to a single user (Jeff)** instead of "respect every user's permissions" from day one.
 3. **Names a concrete tech stack** and deployment model instead of leaving it open.
-4. **Elevates email/correspondence access to the #1 feasibility risk** — settlement-intelligence (the highest-value feature) depends entirely on it, and the API may not expose it well. Fallbacks are defined in [docs/02](02-smokeball-api.md).
+4. **Grounds the plan in the actual Smokeball API** ([docs/02](02-smokeball-api.md), researched from Smokeball's published OpenAPI spec): matter-linked emails are readable (as files), full-text document search exists, writes are asynchronous, rate limits are 5 req/s, and there are no documented deep links — each of which changed a design decision.
 5. **Adds an eval harness** ([docs/04](04-testing-and-evals.md)): the original's "command library" becomes an automated accuracy test suite with golden data, not just a demo script.
 6. **Adds go/no-go gates between phases** with measurable acceptance criteria, plus operational concerns the original omitted (cost, secrets, logging with privileged data, backup, Anthropic data-use posture).
 7. **Checks against Smokeball's own AI roadmap** (their "Archie" AI) so we don't build what the vendor is about to ship.

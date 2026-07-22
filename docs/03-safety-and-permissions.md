@@ -20,8 +20,9 @@ The system prompt states these, but **every one must also be enforced mechanical
 2. Claude calls `propose_<action>(payload)`. The backend validates the payload, resolves ambiguities (or returns candidates for the user to pick), checks for conflicts (e.g. calendar overlap), and returns a **confirmation card** rendered in the UI: exactly what will be created/changed, on which calendars, linked to which matter.
 3. User clicks Confirm (or says "confirm" — but the card is always shown). Backend mints a single-use confirmation token bound to the payload hash.
 4. Claude (or the UI directly) calls `execute_<action>(confirmation_token)`. Any payload drift invalidates the token.
-5. Backend performs the Smokeball API call, writes an audit log entry, and returns the created record's ID/link.
-6. **Enhanced confirmation** (deadline-related changes): the card displays the deadline's source record and requires typed confirmation ("move it anyway"), not just a click.
+5. Backend performs the Smokeball API call and writes an audit log entry.
+6. **Verify:** Smokeball processes writes asynchronously (success response ≠ committed; failures arrive via the `error` webhook). The UI shows "Creating…" until the record's webhook arrives or a poll confirms it exists, then reports success with the record's identifier — or surfaces the failure honestly.
+7. **Enhanced confirmation** (deadline-related changes): the card displays the deadline's source record and requires typed confirmation ("move it anyway"), not just a click.
 
 ## Audit log
 
