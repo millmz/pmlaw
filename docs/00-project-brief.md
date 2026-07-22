@@ -2,16 +2,16 @@
 
 ## Vision
 
-Build a secure AI assistant ("LawMan") for Phillips & Millman, LLP that connects to Smokeball and acts as an intelligent operating layer over it. Attorneys ask questions and give instructions in plain language; LawMan retrieves calendars, tasks, matters, documents, and correspondence, summarizes case status, and — after explicit confirmation — performs approved administrative actions (create calendar events, create tasks, reschedule tasks).
+Build a secure AI assistant ("PAM") for Phillips & Millman, LLP that connects to Smokeball and acts as an intelligent operating layer over it. Attorneys ask questions and give instructions in plain language; PAM retrieves calendars, tasks, matters, documents, and correspondence, summarizes case status, and — after explicit confirmation — performs approved administrative actions (create calendar events, create tasks, reschedule tasks).
 
-LawMan reduces time spent manually opening matters, checking folders, reviewing emails, and piecing together case status. It does **not** replace attorney judgment: it organizes, retrieves, summarizes, and executes administrative instructions while keeping the attorney in control.
+PAM reduces time spent manually opening matters, checking folders, reviewing emails, and piecing together case status. It does **not** replace attorney judgment: it organizes, retrieves, summarizes, and executes administrative instructions while keeping the attorney in control.
 
 ## Users
 
 - **v1: Jeff Millman only.** Single-user MVP. This is deliberate — it sidesteps the hardest permission problems while we validate accuracy, and matches how the tool will actually be adopted (one enthusiastic user first).
 - **Later:** Frank, Anthony, other attorneys, then paralegals/staff. Multi-user requires solving per-user permission enforcement (see [docs/03](03-safety-and-permissions.md)) — a user must never see matters, documents, calendars, or communications they cannot access inside Smokeball.
 
-## The three questions LawMan answers
+## The three questions PAM answers
 
 1. **Today** — What's on my calendar? What's due, overdue, or urgent?
 2. **Matters** — What's happening in a matter? Which cases need follow-up, have upcoming appearances, sent settlement packages, adjusters to chase?
@@ -19,7 +19,7 @@ LawMan reduces time spent manually opening matters, checking folders, reviewing 
 
 ## Core principles
 
-1. **Smokeball is the system of record.** Never invent a matter, event, task, document, email, deadline, adjuster, policy limit, settlement amount, or case status. LawMan's own database is a cache and an audit trail, never an authority over Smokeball.
+1. **Smokeball is the system of record.** Never invent a matter, event, task, document, email, deadline, adjuster, policy limit, settlement amount, or case status. PAM's own database is a cache and an audit trail, never an authority over Smokeball.
 2. **Read before write.** The first releases are strictly read-only. Write actions come only after read accuracy is validated on real firm data, and every write requires explicit user confirmation.
 3. **Show your sources.** Every material statement cites the Smokeball records it came from, with enough identifying info (ideally a deep link) to open them in Smokeball. "I could not verify X" is a first-class answer.
 4. **Facts vs. inference, always labeled.** "The settlement folder contains Demand.pdf (created May 5)" is a fact. "The package appears to have been sent" is an inference and must be supported by a matter-linked email or activity record — never by the document's mere existence.

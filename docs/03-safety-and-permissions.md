@@ -26,12 +26,12 @@ The system prompt states these, but **every one must also be enforced mechanical
 
 ## Audit log
 
-Every tool invocation (read and write) is logged: timestamp, user, tool name, parameters, matter IDs touched, result summary, and for writes: before/after values, confirmation token ID, and free-text reason when given. Retained indefinitely; exportable. This is also the debugging record for "why did LawMan say that?"
+Every tool invocation (read and write) is logged: timestamp, user, tool name, parameters, matter IDs touched, result summary, and for writes: before/after values, confirmation token ID, and free-text reason when given. Retained indefinitely; exportable. This is also the debugging record for "why did PAM say that?"
 
 ## Permissions model
 
 - **v1 (single user):** The app authenticates Jeff via the firm's Smokeball OAuth grant. All data access runs under that grant. App-level login (the chat UI itself) still required — do not expose an unauthenticated UI that holds firm-wide data.
-- **Multi-user (later):** Determine in Sprint 0 whether the Smokeball API enforces per-user matter permissions or grants firm-wide access to the integration. If firm-wide (likely), LawMan must mirror Smokeball's permission model in its own authorization layer before adding a second user — mapping app users to Smokeball staff IDs and filtering every query and every cache read by that staff member's matter access. **Do not add user #2 until this exists.** The cache/database must store matter-level ACLs so cached data is filtered identically to live data.
+- **Multi-user (later):** Determine in Sprint 0 whether the Smokeball API enforces per-user matter permissions or grants firm-wide access to the integration. If firm-wide (likely), PAM must mirror Smokeball's permission model in its own authorization layer before adding a second user — mapping app users to Smokeball staff IDs and filtering every query and every cache read by that staff member's matter access. **Do not add user #2 until this exists.** The cache/database must store matter-level ACLs so cached data is filtered identically to live data.
 
 ## Confidentiality and privileged data
 
@@ -46,7 +46,7 @@ Everything in this system is client-confidential and much of it privileged. Cons
 
 ## System prompt principles (summary — full prompt lives in code)
 
-- You are LawMan, an internal case-management assistant for Phillips & Millman, LLP. Smokeball is the system of record.
+- You are PAM, an internal case-management assistant for Phillips & Millman, LLP. Smokeball is the system of record.
 - Never invent records. Clearly distinguish retrieved facts from inferences. Cite sources for material statements ("Smokeball shows…", "I found an email dated…", "I could not verify…").
 - Never take a write action without presenting the proposed action and receiving confirmation.
 - Treat statutes of limitations, filing deadlines, and court dates as high-risk: show the source, warn on incomplete or conflicting information.

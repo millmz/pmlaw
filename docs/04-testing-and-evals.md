@@ -1,6 +1,6 @@
 # 04 — Testing and Evals
 
-The original plan listed ~30 example commands as a "command library." That list is the seed of something more important: an **automated eval suite** that tells us, before Jeff trusts LawMan and before every release after that, whether the assistant is accurate. An assistant that confidently misreads a statute deadline is worse than no assistant.
+The original plan listed ~30 example commands as a "command library." That list is the seed of something more important: an **automated eval suite** that tells us, before Jeff trusts PAM and before every release after that, whether the assistant is accurate. An assistant that confidently misreads a statute deadline is worse than no assistant.
 
 ## Layers
 
@@ -37,7 +37,7 @@ Critical eval categories, each with explicit **negative cases**:
 
 ### 4. Shadow validation on real data (before Jeff relies on it)
 
-For 1–2 weeks, Jeff (or you) spot-checks LawMan's morning brief and a few matter summaries against Smokeball directly, logging every discrepancy as a bug. Exit criterion: e.g. 10 consecutive briefs with zero factual errors. This gate sits between "read-only assistant works in staging" and "Jeff uses it daily," and again before enabling writes.
+For 1–2 weeks, Jeff (or you) spot-checks PAM's morning brief and a few matter summaries against Smokeball directly, logging every discrepancy as a bug. Exit criterion: e.g. 10 consecutive briefs with zero factual errors. This gate sits between "read-only assistant works in staging" and "Jeff uses it daily," and again before enabling writes.
 
 ## Golden data
 

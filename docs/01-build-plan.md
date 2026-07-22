@@ -7,7 +7,7 @@ flowchart LR
     subgraph Firm
         U[Jeff — browser chat UI]
     end
-    subgraph "LawMan backend (single deployment)"
+    subgraph "PAM backend (single deployment)"
         API[App server<br/>auth, chat, tool execution,<br/>confirmations, audit log]
         AG[Claude agent loop<br/>closed tool registry]
         SY[Sync worker<br/>webhooks + scheduled pulls]
@@ -27,7 +27,7 @@ flowchart LR
 
 ### The key addition vs. the original plan: a sync/cache layer
 
-The original plan implied answering everything with live API calls. That works for "what's on my calendar today" but **cannot work** for the firm-wide questions that make LawMan valuable:
+The original plan implied answering everything with live API calls. That works for "what's on my calendar today" but **cannot work** for the firm-wide questions that make PAM valuable:
 
 - "Which matters have no activity in the last 30 days?"
 - "Which active matters have no upcoming task or event?"
@@ -129,4 +129,4 @@ Multi-user with permission enforcement (see [docs/03](03-safety-and-permissions.
 4. **Email parsing quality** — emails are readable (as downloadable files with to/from metadata), so settlement intelligence is feasible, but "was it sent" verification depends on parsing .eml/.msg files reliably. De-risk with real samples in Sprint 0/3.
 5. **No deep links** — no documented way to link into a Smokeball matter/record; citations fall back to identifiers unless Sprint 0 finds working web-app URL patterns.
 6. **Data quality in Smokeball** — folder-naming inconsistencies ("Settlement Package" vs variants), tasks without matters, uncategorized deadlines. Mitigation: fuzzy matching + the eval suite measures real-world hit rate; the health-check surface doubles as a data-hygiene report.
-7. **Vendor overlap (Archie)** — Smokeball's own AI now does agentic matter Q&A and drafting in Word/Outlook. LawMan stays on ground Archie doesn't occupy: cross-matter reporting, settlement follow-up workflow, conversational writes, morning brief. Re-check each phase.
+7. **Vendor overlap (Archie)** — Smokeball's own AI now does agentic matter Q&A and drafting in Word/Outlook. PAM stays on ground Archie doesn't occupy: cross-matter reporting, settlement follow-up workflow, conversational writes, morning brief. Re-check each phase.

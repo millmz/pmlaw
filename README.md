@@ -1,8 +1,8 @@
-# LawMan — Phillips & Millman AI Assistant
+# PAM — Phillips & Millman AI Assistant
 
 An AI assistant for Phillips & Millman, LLP that sits on top of [Smokeball](https://www.smokeball.com) and lets attorneys manage their daily work through natural-language conversation: calendars, tasks, matters, documents, emails, deadlines, and (later) approved write actions like creating events and tasks.
 
-**Smokeball is the system of record. LawMan retrieves, organizes, summarizes, and — only with explicit confirmation — acts.**
+**Smokeball is the system of record. PAM retrieves, organizes, summarizes, and — only with explicit confirmation — acts.**
 
 ## Status
 
@@ -14,7 +14,7 @@ Planning. No code yet. Start here:
 | [docs/01-build-plan.md](docs/01-build-plan.md) | Architecture, tech stack, phased milestones, acceptance criteria |
 | [docs/02-smokeball-api.md](docs/02-smokeball-api.md) | What the Smokeball API actually supports; feasibility risks; Sprint 0 checklist |
 | [docs/03-safety-and-permissions.md](docs/03-safety-and-permissions.md) | Hard rules, confirmation flows, audit logging, confidentiality |
-| [docs/04-testing-and-evals.md](docs/04-testing-and-evals.md) | How we know LawMan is accurate before trusting it |
+| [docs/04-testing-and-evals.md](docs/04-testing-and-evals.md) | How we know PAM is accurate before trusting it |
 
 ## The one-paragraph plan
 

@@ -2,7 +2,7 @@
 
 Researched 2026-07-22, primarily from Smokeball's own public GitHub repos, which contain the source of docs.smokeball.com and the full OpenAPI spec (updated 2026-07-17): [`smokeballdev/api-docs`](https://github.com/smokeballdev/api-docs), [`smokeballdev/docs`](https://github.com/smokeballdev/docs), [`smokeballdev/sdk-docs`](https://github.com/smokeballdev/sdk-docs). Items marked ⚠️ are inferred from secondary sources or couldn't be verified; Sprint 0 confirms them.
 
-## Bottom line for LawMan
+## Bottom line for PAM
 
 **The core product is feasible.** Matters, tasks (with subtasks), calendar events, files/folders (including download and full-text content search), memos, contacts, staff, and custom-field layouts are all readable; tasks and events are writable; webhooks cover the records we care about. The settlement-intelligence feature is feasible too — matter-linked **emails are exposed as files** (with to/from metadata and downloadable full content), which is exactly the evidence trail we need. The real constraints are operational: a **5 requests/second rate limit** (validates the sync/cache architecture), **asynchronous writes** (affects the confirmation UX), no documented deep links, and an access-approval process that starts with the firm's account manager.
 
@@ -11,7 +11,7 @@ Researched 2026-07-22, primarily from Smokeball's own public GitHub repos, which
 - Access is not self-serve. For a firm building its own internal integration: request API access through the firm's **Smokeball account manager**, or the "Smokeball Firm API Access Request Form" on marketplace.smokeball.com. Build as a **Private App** (single firm).
 - ⚠️ Firm API access reportedly requires the **Prosper+ plan** — confirm what plan Phillips & Millman is on with the account manager. This could be a hard blocker or an upsell conversation.
 - Approval unlocks the **Developer Console** (console.smokeball.com): app credentials, API keys, and **staging environment** with test accounts (`stagingapi.smokeball.com` / `datastaging-auth.smokeball.com` / `rc-app.smokeball.com` for US).
-- **Scopes are granted by Smokeball per app** (there's a scope-request form) — request everything LawMan needs up front: staff, matters, matter types, contacts, tasks, events, files/folders, file search, memos, layouts, webhooks.
+- **Scopes are granted by Smokeball per app** (there's a scope-request form) — request everything PAM needs up front: staff, matters, matter types, contacts, tasks, events, files/folders, file search, memos, layouts, webhooks.
 - Production requires passing Smokeball's **security review** (questionnaire + data-handling review). Budget time for it; our single-tenant, encrypted, no-training posture ([docs/03](03-safety-and-permissions.md)) is the answer sheet.
 - ⚠️ Cost and approval timeline are undocumented. Ask directly.
 
@@ -19,12 +19,12 @@ Researched 2026-07-22, primarily from Smokeball's own public GitHub repos, which
 
 - OAuth 2.0 (AWS Cognito): **Authorization Code** (per-user) and **Client Credentials** (machine-to-machine) grants. Private apps may use either.
 - Access token: **60 min**; refresh token: **30 days** (longer negotiable). Every request needs `x-api-key` + `Authorization: Bearer`.
-- **Recommended for LawMan:** Client Credentials with the **`UserId` header** set to Jeff's user ID — the API then enforces Smokeball's per-user matter/file permissions, and this is also the path to multi-user later (one header swap per app-user). Paths are prefixed with the accountId.
+- **Recommended for PAM:** Client Credentials with the **`UserId` header** set to Jeff's user ID — the API then enforces Smokeball's per-user matter/file permissions, and this is also the path to multi-user later (one header swap per app-user). Paths are prefixed with the accountId.
 - Operational trap: **webhook subscriptions are auto-deleted when the refresh token expires or access is revoked** — the sync worker must verify/recreate subscriptions on every auth refresh cycle.
 
 ## Capability matrix
 
-| LawMan requirement | API reality | Status |
+| PAM requirement | API reality | Status |
 |---|---|---|
 | Staff list, user identity | `/staff`, `/firmusers` (staffId↔userId mapping) | ✅ Full |
 | Matter search/filter | `/matters` with search, MatterTypeId, Status, ContactId, UpdatedSince filters; AND-only search syntax | ✅ Full (practice area via matter types) |
@@ -50,11 +50,11 @@ Researched 2026-07-22, primarily from Smokeball's own public GitHub repos, which
 3. **Write confirmation flow gets a fourth step:** propose → confirm → execute → **verify** (await the record's webhook or poll until visible; surface the `error` webhook if the async write failed). The UI says "Creating…" until verified.
 4. **"Office calendar" and conflict detection** are computed in our cache across all staff attendees — actually easier than a group-calendar API.
 5. **No deep links (probably):** citations render as "Matter 2024-0117 · Millman v. — Email: 'Settlement demand', May 6" with copyable identifiers. If Sprint 0 discovers working web-app URL patterns, upgrade to links.
-6. **Recurring events:** LawMan reads them but declines to create/modify them (tells the user to do it in Smokeball).
+6. **Recurring events:** PAM reads them but declines to create/modify them (tells the user to do it in Smokeball).
 
 ## Archie overlap (Smokeball's own AI)
 
-Smokeball ships "Archie", and its May 2026 "Next Generation" release is agentic: matter Q&A with citations, document review/comparison, drafting in Word/Outlook, chronologies, transcription. **Don't compete with Archie on single-matter Q&A and drafting.** LawMan's differentiated ground, which Archie doesn't occupy: **cross-matter reporting** (stalled matters, missing next tasks, court-date rollups), **the PI settlement follow-up workflow**, **conversational task/calendar writes with confirmation**, and **the proactive morning brief**. Revisit this boundary each phase — if Archie ships a feature, drop ours.
+Smokeball ships "Archie", and its May 2026 "Next Generation" release is agentic: matter Q&A with citations, document review/comparison, drafting in Word/Outlook, chronologies, transcription. **Don't compete with Archie on single-matter Q&A and drafting.** PAM's differentiated ground, which Archie doesn't occupy: **cross-matter reporting** (stalled matters, missing next tasks, court-date rollups), **the PI settlement follow-up workflow**, **conversational task/calendar writes with confirmation**, and **the proactive morning brief**. Revisit this boundary each phase — if Archie ships a feature, drop ours.
 
 ## Sprint 0 checklist (updated with research findings)
 
