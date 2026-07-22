@@ -105,7 +105,7 @@ Morning brief generated on schedule (email or in-app); matter health checks with
 
 ### Later (parked)
 
-Multi-user with permission enforcement (see [docs/03](03-safety-and-permissions.md) — gated on its own design), voice input, mobile, Outlook add-in, automated SMS briefs, AI Matter Summary write-back into Smokeball custom fields or a standardized matter document (per the original plan's ordering: real fields > custom fields > summary doc > AI folder).
+Multi-user with permission enforcement (see [docs/03](03-safety-and-permissions.md) — gated on its own design), the **"Ask Pam" voice companion** (saved build prompt in [docs/05](05-ask-pam-voice-companion.md) — build after Sprint 4), mobile, Outlook add-in, automated SMS briefs, AI Matter Summary write-back into Smokeball custom fields or a standardized matter document (per the original plan's ordering: real fields > custom fields > summary doc > AI folder).
 
 ## Acceptance criteria
 
