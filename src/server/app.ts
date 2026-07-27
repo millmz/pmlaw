@@ -186,6 +186,16 @@ export function buildApp(deps: AppDeps): FastifyInstance {
       }
       return reply.code(404).send({ error: 'not found' });
     });
+  } else {
+    // The UI bundle wasn't built. Say so plainly instead of a mystery 404.
+    console.error(`[pam] WARNING: web UI not found at ${webDist} — run "pnpm build"`);
+    app.get('/', async (_req, reply) =>
+      reply.code(503).type('text/html').send(
+        '<h1 style="font-family:Georgia,serif">PAM — server is up, but the web app was not built</h1>' +
+          '<p style="font-family:system-ui">The deploy needs its build step to run <code>pnpm build</code>. ' +
+          'Check that the build command includes it (see render.yaml).</p>',
+      ),
+    );
   }
 
   // ---------------------------------------------------------------- webhook

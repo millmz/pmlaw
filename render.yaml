@@ -10,7 +10,9 @@ services:
     branch: claude/dads-platform-build-plan-lcppom
     # npm-installed pnpm avoids corepack's signature-verification breakage
     # (old corepack builds reject current pnpm releases after npm's key rotation).
-    buildCommand: npm install -g pnpm@10 && pnpm install --frozen-lockfile && pnpm build
+    # --prod=false forces devDependencies (vite, react) even if NODE_ENV=production,
+    # which the SPA build needs.
+    buildCommand: npm install -g pnpm@10 && pnpm install --frozen-lockfile --prod=false && pnpm build
     startCommand: pnpm exec tsx src/server/main.ts
     healthCheckPath: /healthz
     envVars:
