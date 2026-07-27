@@ -15,5 +15,6 @@
     "noEmit": true,
     "types": ["node"]
   },
-  "include": ["src/**/*.ts", "drizzle.config.ts", "vitest.config.ts"]
+  "include": ["src/**/*.ts", "drizzle.config.ts", "vitest.config.ts", "vite.config.ts"],
+  "exclude": ["src/web"]
 }

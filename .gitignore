@@ -4,3 +4,5 @@ dist/
 .env
 .env.*
 pam-data/
+e2e/screenshots/
+test-results/

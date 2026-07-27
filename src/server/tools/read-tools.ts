@@ -156,6 +156,7 @@ const getCalendar: ToolDef = {
             subject: e.subject,
             location: e.location,
             matter: m ? matterLabel(m) : null,
+            matterId: e.matterId,
             attendees: e.attendeeIds,
             onOfficeCalendar: e.onOfficeCalendar,
           };
@@ -217,6 +218,7 @@ const getTasks: ToolDef = {
         status: t.status,
         daysOverdue: daysOverdue({ dueDate: t.task.dueDate ?? undefined, isCompleted: false }, now),
         matter: m ? matterLabel(m) : null,
+        matterId: t.task.matterId,
         assignees: t.task.assigneeIds,
       };
     };

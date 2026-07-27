@@ -10,7 +10,7 @@ services:
     branch: claude/dads-platform-build-plan-lcppom
     # npm-installed pnpm avoids corepack's signature-verification breakage
     # (old corepack builds reject current pnpm releases after npm's key rotation).
-    buildCommand: npm install -g pnpm@10 && pnpm install --frozen-lockfile
+    buildCommand: npm install -g pnpm@10 && pnpm install --frozen-lockfile && pnpm build
     startCommand: pnpm exec tsx src/server/main.ts
     healthCheckPath: /healthz
     envVars:

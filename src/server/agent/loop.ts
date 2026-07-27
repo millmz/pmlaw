@@ -38,12 +38,20 @@ export interface LlmMessage {
       )[];
 }
 
+export interface LlmHooks {
+  /** Called with incremental text as the model produces it (streaming UIs). */
+  onText?: (delta: string) => void;
+}
+
 export interface LlmClient {
-  create(params: {
-    system: string;
-    messages: LlmMessage[];
-    tools: { name: string; description: string; input_schema: unknown }[];
-  }): Promise<LlmResponse>;
+  create(
+    params: {
+      system: string;
+      messages: LlmMessage[];
+      tools: { name: string; description: string; input_schema: unknown }[];
+    },
+    hooks?: LlmHooks,
+  ): Promise<LlmResponse>;
 }
 
 export interface AgentTurnResult {
@@ -64,11 +72,17 @@ export function toolDefinitions(): { name: string; description: string; input_sc
   }));
 }
 
+export interface AgentHooks extends LlmHooks {
+  /** Called when a tool is about to run (progress UIs). */
+  onTool?: (name: string) => void;
+}
+
 export async function runAgentTurn(
   ctx: ToolContext,
   llm: LlmClient,
   history: LlmMessage[],
   userMessage: string,
+  hooks: AgentHooks = {},
 ): Promise<AgentTurnResult> {
   const messages: LlmMessage[] = [...history, { role: 'user', content: userMessage }];
   const tools = toolDefinitions();
@@ -76,7 +90,10 @@ export async function runAgentTurn(
   const toolCalls: { name: string; params: unknown }[] = [];
 
   for (let step = 0; step < MAX_STEPS; step++) {
-    const res = await llm.create({ system: SYSTEM_PROMPT, messages, tools });
+    const res = await llm.create(
+      { system: SYSTEM_PROMPT, messages, tools },
+      hooks.onText ? { onText: hooks.onText } : {},
+    );
     const toolUses = res.content.filter((b): b is LlmToolUseBlock => b.type === 'tool_use');
 
     if (res.stopReason !== 'tool_use' || toolUses.length === 0) {
@@ -92,6 +109,7 @@ export async function runAgentTurn(
     messages.push({ role: 'assistant', content: res.content });
     const results: { type: 'tool_result'; tool_use_id: string; content: string }[] = [];
     for (const use of toolUses) {
+      hooks.onTool?.(use.name);
       toolCalls.push({ name: use.name, params: use.input });
       try {
         const result = await runTool(ctx, use.name, use.input);
@@ -122,19 +140,21 @@ export async function runAgentTurn(
   };
 }
 
-/** Production LLM client over the Anthropic SDK. */
+/** Production LLM client over the Anthropic SDK, with true delta streaming. */
 export async function anthropicLlm(model = 'claude-sonnet-5'): Promise<LlmClient> {
   const { default: Anthropic } = await import('@anthropic-ai/sdk');
   const client = new Anthropic(); // reads ANTHROPIC_API_KEY
   return {
-    async create(params) {
-      const res = await client.messages.create({
+    async create(params, hooks) {
+      const stream = client.messages.stream({
         model,
         max_tokens: 4000,
         system: [{ type: 'text', text: params.system, cache_control: { type: 'ephemeral' } }],
         messages: params.messages as never,
         tools: params.tools as never,
       });
+      if (hooks?.onText) stream.on('text', (delta) => hooks.onText!(delta));
+      const res = await stream.finalMessage();
       return {
         content: res.content as LlmContentBlock[],
         stopReason: (res.stop_reason === 'tool_use' ? 'tool_use' : 'end_turn') as LlmResponse['stopReason'],
