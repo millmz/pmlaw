@@ -8,12 +8,14 @@ services:
     runtime: node
     plan: free
     branch: claude/dads-platform-build-plan-lcppom
-    buildCommand: corepack enable && corepack prepare pnpm@10.12.1 --activate && pnpm install --frozen-lockfile
+    # npm-installed pnpm avoids corepack's signature-verification breakage
+    # (old corepack builds reject current pnpm releases after npm's key rotation).
+    buildCommand: npm install -g pnpm@10 && pnpm install --frozen-lockfile
     startCommand: pnpm exec tsx src/server/main.ts
     healthCheckPath: /healthz
     envVars:
       - key: NODE_VERSION
-        value: '22.12.0'
+        value: '22.16.0'
       - key: ANTHROPIC_API_KEY
         sync: false
       - key: PAM_ACCESS_CODE
