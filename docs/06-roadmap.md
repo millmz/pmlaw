@@ -15,19 +15,22 @@ The living checklist for the build. Split by **who does it**: Adam (firm-side, d
 - [ ] **Ask about a subdomain** — e.g. `pam.pmlawny.com` — who controls the firm's DNS.
 - [ ] **Firm decisions:** chat-history retention (default: keep, purgeable), and who besides Jeff may see PAM's output in v1 (default: nobody — single user).
 
-### Claude: build against a mock (real code, no key required)
+### Claude: build against a mock (real code, no key required) — ✅ DONE 2026-07-27
 
-Smokeball's full OpenAPI spec is public — so the entire platform can be built and tested against a **mock Smokeball server** generated from it, then repointed at staging when credentials arrive. Nothing here is throwaway: the mock becomes the permanent test fixture for the eval suite.
+All built and tested (53 tests green, `pnpm demo` prints the brief end-to-end):
 
-- [ ] Scaffold the TypeScript monorepo: Fastify server, Postgres + Drizzle schema (staff, matters, matter types, tasks, events, files, sync state, audit log, sessions), Next.js chat UI shell styled from the approved PAM mockup.
-- [ ] Generate a typed Smokeball API client from `smokeballdev/docs` `openapi.json`.
-- [ ] Build the **mock Smokeball server** implementing the endpoints we use, seeded with the golden dataset from [docs/04](04-testing-and-evals.md) (~10 fictional matters incl. the settlement trap case).
-- [ ] Sync worker v1 against the mock: full sync → incremental `UpdatedSince` → webhook receiver (HMAC verification, dedupe, out-of-order tolerance).
-- [ ] Deterministic date/status engine (overdue / due today / upcoming, firm timezone `America/New_York`, DST boundaries) with the full unit-test suite — this is the legal-risk core, done first.
-- [ ] Agent loop with the first ~6 read tools reading from Postgres; source-citation plumbing end to end.
-- [ ] Eval harness skeleton: golden data in, command library as test cases, programmatic scoring.
+- [x] TypeScript project: Fastify server, Postgres cache (PGlite dev/test — same Drizzle schema as managed Postgres later), branded chat UI page. *(Deviation: single package + plain HTML page instead of monorepo + Next.js — split when the UI grows; vendored the OpenAPI spec and hand-typed the client for the endpoints we use instead of full codegen.)*
+- [x] Mock Smokeball server: auth, paging, UpdatedSince, presigned downloads, full-text search, HMAC-signed webhooks, **async writes with error-webhook semantics**, optional 5 rps limiting.
+- [x] Golden dataset — all docs/04 cases, anchor-relative dates.
+- [x] Sync worker: full + incremental cursors + idempotent webhook application; end-to-end test proves API write → webhook → cache.
+- [x] Date/status engine with DST-boundary tests; statute-reminder title detection.
+- [x] Six read tools with citations + audit log + hallucination canary (fabricated-id detector).
+- [x] Agent loop (injectable LLM; Anthropic SDK in production) + eval harness with 10 scored cases incl. the Bailey not-sent trap.
+- [x] CI: typecheck + tests on every push.
 
-**Exit:** the walking skeleton answers "what does my day look like?" correctly against mock data, with citations, evals green.
+**Remaining Phase A (needs Adam):**
+- [ ] Set `ANTHROPIC_API_KEY` and run `pnpm eval` — first scored eval pass of the live model.
+- [ ] `pnpm dev` + chat with PAM against golden data; note anything that feels wrong before real data ever touches it.
 
 ## Phase B — Key arrives: Sprint 0 verification (days, not weeks)
 

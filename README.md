@@ -6,7 +6,19 @@ An AI assistant for Phillips & Millman, LLP that sits on top of [Smokeball](http
 
 ## Status
 
-Planning. No code yet. Start here:
+**Phase A built** — the full walking skeleton runs against a mock Smokeball generated from the vendored OpenAPI spec (`vendor/smokeball-openapi.json`), with golden test data covering every trap case. Swapping the mock for the real staging API is a config change (`SMOKEBALL_BASE_URL` + credentials), pending API access.
+
+```bash
+pnpm install
+pnpm test        # 53 tests: date engine, golden data, mock API, sync, tools, agent loop
+pnpm demo        # prints Jeff's morning brief end-to-end (mock → sync → cache → tools)
+pnpm dev         # serves the chat UI + brief at :8787 (chat needs ANTHROPIC_API_KEY)
+pnpm eval        # eval harness — scored with a key, lists cases without one
+```
+
+Layout: `src/core` (types, date/status engine, golden dataset) · `src/smokeball` (typed client + mock server) · `src/server` (Postgres cache via PGlite, sync worker, tool layer, agent loop, UI) · `src/evals`.
+
+Plan docs:
 
 | Doc | Purpose |
 |---|---|
