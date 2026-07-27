@@ -17,6 +17,8 @@ Planning. No code yet. Start here:
 | [docs/04-testing-and-evals.md](docs/04-testing-and-evals.md) | How we know PAM is accurate before trusting it |
 | [docs/05-ask-pam-voice-companion.md](docs/05-ask-pam-voice-companion.md) | Saved build prompt for the "Ask Pam" voice companion — build after the core platform works |
 | [docs/06-roadmap.md](docs/06-roadmap.md) | The working checklist: who does what, in what order, starting today |
+| [docs/07-jeff-interview.md](docs/07-jeff-interview.md) | The interview questions put to Jeff |
+| [docs/08-jeff-answers.md](docs/08-jeff-answers.md) | **Jeff's answers and what they changed in the build** — read before writing code |
 
 ## The one-paragraph plan
 

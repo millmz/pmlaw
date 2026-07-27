@@ -83,19 +83,31 @@ OAuth token management with refresh; Postgres schema + sync worker for staff, ma
 
 ### Sprint 2 — Read-only assistant, full
 
-Matter search and reporting from the cache (practice area, status, attorney, court-date ranges, no-upcoming-task, no-recent-activity); other staff calendars + group/office calendar; conflict detection; court-appearance reports; the full daily briefing with priority ordering; eval suite running in CI against golden staging data.
+Matter search and reporting from the cache (practice area, status, attorney, court-date ranges, no-upcoming-task, no-recent-activity); matter resolution **by client name** with last-name fallback; other staff calendars + the office calendar; court-appearance reports incl. the **next-week Mon–Fri list delivered by Wednesday**; the full daily briefing in Jeff's own order (today's calendar → week ahead → tasks due today → overdue, split into statute reminders vs. needs-a-decision); eval suite running in CI against golden staging data.
+
+*Cut per [docs/08](08-jeff-answers.md): calendar conflict detection.*
 
 **Gate:** shadow-validation period ([docs/04](04-testing-and-evals.md)) passes — e.g. 10 consecutive mornings, zero factual errors.
 
-### Sprint 3 — PI settlement intelligence
+### Sprint 3 — PI settlement intelligence + the Settlement Status Board
 
-The highest-value, highest-risk feature; it gets its own phase. Folder traversal + settlement-package detection (file metadata first, then document text extraction where needed); matter-email search; sent-date verification (email/correspondence evidence only — never folder presence); adjuster extraction; settlement timeline with per-entry sources; follow-up gap detection. Background-computed per matter, stored with evidence, refreshed on sync.
+The highest-value phase — this is Jeff's "if it could only do one thing" ([docs/08](08-jeff-answers.md)).
 
-**Gate:** on golden data: zero false "sent" claims. On real data: Jeff spot-checks N matters and confirms the timelines.
+**Memo/note parsing first** (his hand-maintained source of truth): insurer, demand, current offer + date + who, adjuster name/email/phone, claim number, policy limits. Then `Settlement Package` folder detection (standard name, no fuzzy matching needed); **liens** from the standard `Liens` folder + `lien` keyword search; **injuries** from the bill of particulars (Pleadings) or the package; matter-email search for sent-verification **including Dropbox links, not just attachments**; settlement timeline with per-entry sources; follow-up gap detection against his 2-week-then-agreed-date rhythm.
+
+**The Settlement Status Board** — one screen, all active PI matters: client · injuries · date of accident · insurer · adjuster contact · claim number · policy limits · liens · demand · current offer · last negotiation and **who** · statute date · next follow-up.
+
+**Plus "who's negotiating what"** — cross-matter view of who last touched settlement notes, from memo `createdBy`/`updatedBy`. Something Jeff has wanted for years and the API gives us nearly free.
+
+**Gate:** on golden data, zero false "sent" claims (including the mail-only and Dropbox-link cases). On real data, Jeff confirms the board against matters he knows cold.
 
 ### Sprint 4 — Controlled write actions
 
-Confirmation framework (propose/confirm/execute with single-use tokens — [docs/03](03-safety-and-permissions.md)); create calendar events (multi-calendar); create/assign tasks; reschedule non-critical tasks; hard-deadline guard with enhanced confirmation; full audit trail; conflict warnings on event creation.
+Confirmation framework (propose/confirm/execute/verify with single-use tokens — [docs/03](03-safety-and-permissions.md)).
+
+**Task rescheduling leads** — it's Jeff's most frequent daily action, including a batch triage view for the morning overdue sweep. Then calendar event creation (defaulting to **Jeff + Office every time**, supporting the `JTM/FJP` shared-diary phrasing and the initials-prefix title convention); task creation assigned to **both Jeff and the assignee**, matter-tagged, with "front desk" recognized as an assignee.
+
+**Hard-deadline guard keys off title text, not categories** (the firm doesn't use task categories): statute reminders follow a detectable 6-month/3-month/1-month pattern and are never movable. Full audit trail throughout.
 
 **Gate:** write-action acceptance criteria below; audit log reviewed; a week of real use with zero unintended writes.
 
@@ -123,8 +135,8 @@ Multi-user with permission enforcement (see [docs/03](03-safety-and-permissions.
 
 ## Known risks (ranked, updated after API research — details in [docs/02](02-smokeball-api.md))
 
-1. **API access approval** — firm API access reportedly requires the Prosper+ plan and goes through the account manager plus a security review; cost and timeline are undocumented. Start the conversation immediately; everything else waits on it.
-2. **Rate limit (5 req/s)** — confirmed low; the sync/cache layer is mandatory, initial full sync must be throttled, and the sync worker needs queuing + backoff.
+1. **API access approval** — ✅ largely de-risked: the firm is on **Prosper Plus**, Jeff is the Smokeball admin and approves the connection himself, and the conversation with Smokeball is already open. Remaining unknowns are cost, timeline, and the security review.
+2. **Rate limit (5 req/s)** — confirmed low; the sync/cache layer is mandatory with queuing + backoff. With "hundreds and hundreds" of matters, a first full sync lands around **20–60 minutes** (not the hours feared when the matter count was unknown); incremental syncs are minutes.
 3. **Async writes** — all Smokeball POST/PUTs are queued; success response ≠ committed, failures arrive via an `error` webhook. The write flow gains a verify step (propose → confirm → execute → verify) before telling the user "created."
 4. **Email parsing quality** — emails are readable (as downloadable files with to/from metadata), so settlement intelligence is feasible, but "was it sent" verification depends on parsing .eml/.msg files reliably. De-risk with real samples in Sprint 0/3.
 5. **No deep links** — no documented way to link into a Smokeball matter/record; citations fall back to identifiers unless Sprint 0 finds working web-app URL patterns.

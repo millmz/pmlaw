@@ -6,9 +6,10 @@ The living checklist for the build. Split by **who does it**: Adam (firm-side, d
 
 ### Adam: firm-side groundwork
 
-- [ ] **Chase API access.** Ask the account manager (or have Jeff ask): What plan is the firm on — does firm API access require Prosper+? What does access cost? How long until credentials? Request Developer Console access + a **staging test account**, and scopes for: staff, matters, matter types, contacts, tasks, events, files (+ file search), memos, layouts, webhooks. Flag that we'll need to pass their security review and ask for the questionnaire early.
-- [ ] **Interview Jeff (30 min).** Watch him do his actual morning routine in Smokeball. Collect: the 10 questions he'd ask PAM every day, in his words; what "the office calendar" means concretely (which calendars exist, who's on them); how settlement folders are actually named across matters (exact variants); how statute deadlines are recorded (task category? naming convention?); roughly how many open matters and staff.
-- [ ] **Staff + practice area list.** Names, roles, and who would eventually use PAM (informs the permission model later).
+- [x] ~~**Interview Jeff.**~~ Done 2026-07-27 — answers and their impact on the build in [docs/08](08-jeff-answers.md).
+- [x] ~~**Confirm the plan tier.**~~ Prosper Plus ✅; Jeff is the firm's Smokeball admin and approves the API connection himself.
+- [ ] **Chase API access.** The conversation with Smokeball is already open — push it to credentials. Still to ask: what access costs, how long until credentials, and the **security-review questionnaire** (get it early). Request Developer Console access + a **staging test account**, and scopes for: staff, matters, matter types, contacts, tasks, events, files (+ file search), **memos**, layouts, webhooks. *(Memos are now critical — they're Jeff's settlement source of truth.)*
+- [ ] **Four quick follow-ups with Jeff** (non-blocking, from [docs/08](08-jeff-answers.md)): what "debtor hub" is and its matter-type name; confirm staff name spellings; a screenshot of one real statute reminder task so we can detect the 6/3/1 pattern exactly; whether defense counsel is a Smokeball field/role or only in notes.
 - [ ] **Create an Anthropic Console account** (console.anthropic.com) and an API key — needed the moment the chat loop exists.
 - [ ] **Pick hosting** (recommendation: Fly.io or Railway, US region — ~$20–50/mo) and create the account.
 - [ ] **Ask about a subdomain** — e.g. `pam.pmlawny.com` — who controls the firm's DNS.
