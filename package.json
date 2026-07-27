@@ -24,6 +24,7 @@
     "drizzle-orm": "^0.44.2",
     "fastify": "^5.4.0",
     "luxon": "^3.6.1",
+    "tsx": "^4.20.3",
     "zod": "^3.25.67",
     "zod-to-json-schema": "^3.25.2"
   },
@@ -31,7 +32,6 @@
     "@types/luxon": "^3.6.2",
     "@types/node": "^22.15.0",
     "drizzle-kit": "^0.31.4",
-    "tsx": "^4.20.3",
     "typescript": "^5.8.3",
     "vitest": "^3.2.4"
   }

@@ -62,6 +62,27 @@ async function main() {
   const sessions = new Map<string, LlmMessage[]>();
   const app = Fastify({ logger: false });
 
+  // Access gate for hosted deployments: when PAM_ACCESS_CODE is set, everything
+  // except health checks and (HMAC-verified) webhooks requires HTTP Basic auth
+  // with that code as the password. Real app login lands with Sprint 2
+  // (docs/03 "Permissions model"); this guards the mock-data demo phase.
+  const accessCode = process.env['PAM_ACCESS_CODE'];
+  if (accessCode) {
+    app.addHook('onRequest', async (req, reply) => {
+      if (req.url === '/healthz' || req.url.startsWith('/webhooks/')) return;
+      const header = req.headers.authorization ?? '';
+      const expected = `Basic ${Buffer.from(`pm:${accessCode}`).toString('base64')}`;
+      if (header !== expected) {
+        return reply
+          .code(401)
+          .header('www-authenticate', 'Basic realm="PAM", charset="UTF-8"')
+          .send({ error: 'authentication required' });
+      }
+    });
+  }
+
+  app.get('/healthz', async () => ({ ok: true }));
+
   // Webhook receiver — Smokeball pushes changes straight into the cache.
   app.post('/webhooks/smokeball', async (req) => {
     const { type, payload } = req.body as { type: string; payload: unknown };

@@ -1,0 +1,20 @@
+# Render blueprint: deploy PAM's dev build (mock Smokeball + golden data).
+# In Render: New + -> Blueprint -> connect this repo/branch. You'll be prompted
+# for ANTHROPIC_API_KEY; PAM_ACCESS_CODE is generated for you (find it under
+# the service's Environment tab — it's the login password, username "pm").
+services:
+  - type: web
+    name: pam
+    runtime: node
+    plan: free
+    branch: claude/dads-platform-build-plan-lcppom
+    buildCommand: corepack enable && corepack prepare pnpm@10.12.1 --activate && pnpm install --frozen-lockfile
+    startCommand: pnpm exec tsx src/server/main.ts
+    healthCheckPath: /healthz
+    envVars:
+      - key: NODE_VERSION
+        value: '22.12.0'
+      - key: ANTHROPIC_API_KEY
+        sync: false
+      - key: PAM_ACCESS_CODE
+        generateValue: true
