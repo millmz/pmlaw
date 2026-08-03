@@ -29,3 +29,17 @@ Recorded 2026-08-03. **Incomplete — more installments coming; do not plan agai
 
     Ingredients: rank matters by negotiation activity · adjuster name · current offer · the related follow-up task and whether it's due/overdue · a suggestion with the reason · adjuster contact surfaced inline · tap-to-call (tel: link — "dial it for you" is a phone-side tap, easy on mobile).
 16. **Courts page: redundant to him.** "I don't know if that's any different than today." Fold into Today's day-tabs / chat; doesn't need its own tab.
+
+## Installment 4 — wrap-up
+
+17. **Courts confirmed out as a section.** Courts are schedule items like client meetings or lunch with another attorney — "it's kinda more what my schedule is." One schedule, no special court surface.
+18. **Activity page means nothing to him.** "Maybe you have to educate me a little more as to what activity would mean." → It's the audit/trust trail; it matters for the firm but not for his daily use. Demote out of primary navigation; keep reachable + explain its purpose in plain words when writes arrive (that's when it earns its keep).
+19. **His closing summary of the whole review:**
+    - Make it **more visually pleasing**
+    - Make PAM an **active interaction** — "Pam can locate what I need to locate and have a dialogue with me"
+    - **Bigger lettering** — "so I don't have to squint"
+    - "Other than that, everything looks amazing."
+
+## Synthesis (for the M2 plan)
+
+**Quiet dashboard, powerful conversation.** Today = big-type day calendar with date tabs + today's tasks, nothing else. Chat = the product: locate, summarize, update, suggest, and (soon) act. Settlements = the negotiation conversation ("top five cases I'm negotiating") backed by the board data. Tabs to cut/demote: Courts (fold into schedule), Activity (demote), Matters (secondary, chat-first), Watchlist off Today. Overdue + statute live in a Tasks page. Rescheduling by voice/text is his first write wish. Type scale up across the board; visual identity worth another pass.
