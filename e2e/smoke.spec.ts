@@ -102,6 +102,18 @@ test('mobile: four tabs + More, Tasks reachable', async ({ page }) => {
   await page.screenshot({ path: 'e2e/screenshots/07-mobile.png', fullPage: true });
 });
 
+test('Settlement board renders ranked cases with statuses, liens, and tap-to-call', async ({ page }) => {
+  await login(page);
+  await page.getByRole('link', { name: 'Settlements' }).first().click();
+  // Hughes first (most recent negotiation), with the trap case honestly labeled.
+  await expect(page.getByText('Marcus Hughes')).toBeVisible();
+  await expect(page.getByText('In negotiation').first()).toBeVisible();
+  await expect(page.getByText('sending unverified').first()).toBeVisible();
+  await expect(page.getByText('$97,000.00')).toBeVisible(); // Okafor lien
+  await expect(page.locator('a[href^="tel:"]').first()).toBeVisible();
+  await page.screenshot({ path: 'e2e/screenshots/08-settlements.png', fullPage: true });
+});
+
 test('chat is honest when no API key is configured', async ({ page }) => {
   await login(page);
   await page.locator('.tabbar, .rail').first();

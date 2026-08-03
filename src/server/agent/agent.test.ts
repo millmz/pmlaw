@@ -4,7 +4,7 @@ import { createMockSmokeball, type MockSmokeball } from '../../smokeball/mock/se
 import { SmokeballClient } from '../../smokeball/client.js';
 import { openDb, type Db } from '../db/index.js';
 import { SyncWorker } from '../sync/worker.js';
-import type { ToolContext } from '../tools/read-tools.js';
+import type { ToolContext } from '../tools/types.js';
 import { runAgentTurn, toolDefinitions, type LlmClient, type LlmResponse } from './loop.js';
 
 let mock: MockSmokeball;
@@ -51,6 +51,10 @@ describe('agent loop', () => {
       'get_matter_overview',
       'find_stalled_matters',
       'list_firm_staff',
+      'get_settlement_board',
+      'get_settlement_timeline',
+      'propose_task_reschedule',
+      'execute_task_reschedule',
     ]);
     const cal = defs[0]!.input_schema as { properties: Record<string, unknown> };
     expect(Object.keys(cal.properties)).toContain('scope');

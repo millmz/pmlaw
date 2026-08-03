@@ -1,5 +1,6 @@
 import { zodToJsonSchema } from 'zod-to-json-schema';
-import { READ_TOOLS, runTool, validateCitations, type ToolContext } from '../tools/read-tools.js';
+import { ALL_TOOLS, runTool, validateCitations } from '../tools/registry.js';
+import type { ToolContext } from '../tools/types.js';
 import type { Citation } from '../tools/citations.js';
 import { SYSTEM_PROMPT } from './system-prompt.js';
 
@@ -65,7 +66,7 @@ export interface AgentTurnResult {
 const MAX_STEPS = 8;
 
 export function toolDefinitions(): { name: string; description: string; input_schema: unknown }[] {
-  return READ_TOOLS.map((t) => ({
+  return ALL_TOOLS.map((t) => ({
     name: t.name,
     description: t.description,
     input_schema: zodToJsonSchema(t.paramsSchema, { target: 'openApi3' }),

@@ -4,7 +4,8 @@ import { createMockSmokeball, type MockSmokeball } from '../../smokeball/mock/se
 import { SmokeballClient } from '../../smokeball/client.js';
 import { openDb, type Db } from '../db/index.js';
 import { SyncWorker } from '../sync/worker.js';
-import { runTool, validateCitations, type ToolContext } from './read-tools.js';
+import { runTool, validateCitations } from './registry.js';
+import type { ToolContext } from './types.js';
 
 let mock: MockSmokeball;
 let db: Db;

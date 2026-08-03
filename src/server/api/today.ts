@@ -1,6 +1,7 @@
 import { DateTime } from 'luxon';
 import { FIRM_TZ, appNow, shouldShowNextWeekCourts } from '../../core/dates.js';
-import { runTool, type ToolContext } from '../tools/read-tools.js';
+import { runTool } from '../tools/registry.js';
+import type { ToolContext } from '../tools/types.js';
 
 /**
  * Structured data for the Today dashboard — Jeff's morning order (docs/08 §1):

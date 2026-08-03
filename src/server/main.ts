@@ -4,7 +4,7 @@ import { SmokeballClient } from '../smokeball/client.js';
 import { openDb } from './db/index.js';
 import { SyncWorker } from './sync/worker.js';
 import { anthropicLlm, type LlmClient } from './agent/loop.js';
-import type { ToolContext } from './tools/read-tools.js';
+import type { ToolContext } from './tools/types.js';
 import { buildApp } from './app.js';
 
 /**
@@ -45,6 +45,8 @@ async function main() {
   const ctx: ToolContext = {
     db,
     currentStaffId: 's-jeff',
+    smokeball: client,
+    confirmations: new Map(),
     // Mock data is anchored; real data uses the live clock.
     ...(useReal ? {} : { fixedNowIso: GOLDEN_ANCHOR_ISO }),
   };

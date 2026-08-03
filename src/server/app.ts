@@ -10,7 +10,8 @@ import { schema } from './db/index.js';
 import type { SyncWorker } from './sync/worker.js';
 import { getTodayData } from './api/today.js';
 import { runAgentTurn, type LlmClient, type LlmMessage } from './agent/loop.js';
-import { runTool, type ToolContext } from './tools/read-tools.js';
+import { runTool } from './tools/registry.js';
+import type { ToolContext } from './tools/types.js';
 
 /**
  * The PAM web app: JSON API + SSE chat + static SPA, behind cookie-session
@@ -167,6 +168,11 @@ export function buildApp(deps: AppDeps): FastifyInstance {
       ...(q.from ? { from: q.from } : {}),
       ...(q.to ? { to: q.to } : {}),
     });
+    return result.data;
+  });
+
+  app.get('/api/settlements', async () => {
+    const result = await runTool(ctx, 'get_settlement_board', {});
     return result.data;
   });
 

@@ -16,37 +16,19 @@ import type { Db } from '../db/index.js';
 import { schema } from '../db/index.js';
 import { cite, type Citation } from './citations.js';
 
+import type { ToolContext, ToolDef, ToolResult } from './types.js';
+
 /**
  * PAM's read tools (docs/01 "Tool layer"): a closed registry of typed
  * functions over the cache. Claude never writes SQL and never sees the
  * Smokeball API. Every tool result carries citations and an asOf timestamp.
  *
- * The registry is data — the agent loop derives Claude's tool definitions
- * from it, so capability claims can never drift from what's wired.
+ * The full registry (read + settlement + write) is assembled in registry.ts —
+ * the agent loop derives Claude's tool definitions from it, so capability
+ * claims can never drift from what's wired.
  */
 
-export interface ToolContext {
-  db: Db;
-  /** Fixed instant for tests/demos; omit for the real clock. */
-  fixedNowIso?: string;
-  /** The signed-in user's staff id (v1: Jeff). */
-  currentStaffId: string;
-}
-
-export interface ToolResult {
-  data: unknown;
-  citations: Citation[];
-  asOf: string;
-}
-
-type ToolFn = (ctx: ToolContext, params: unknown) => Promise<ToolResult>;
-
-export interface ToolDef {
-  name: string;
-  description: string;
-  paramsSchema: z.ZodType;
-  run: ToolFn;
-}
+export type { ToolContext, ToolDef, ToolResult } from './types.js';
 
 // ---------------------------------------------------------------- helpers
 
@@ -480,37 +462,3 @@ export const READ_TOOLS: ToolDef[] = [
   listFirmStaff,
 ];
 
-/** Run a tool by name with validation + audit logging. */
-export async function runTool(ctx: ToolContext, name: string, params: unknown): Promise<ToolResult> {
-  const tool = READ_TOOLS.find((t) => t.name === name);
-  if (!tool) throw new Error(`unknown tool: ${name}`);
-  const result = await tool.run(ctx, params);
-  await ctx.db.insert(schema.auditLog).values({
-    actor: ctx.currentStaffId,
-    action: `tool:${name}`,
-    params: params as Record<string, unknown>,
-    result: `ok (${result.citations.length} citations)`,
-  });
-  return result;
-}
-
-/** Citation-integrity check (docs/04 "hallucination canary"). */
-export async function validateCitations(db: Db, citations: Citation[]): Promise<{ valid: boolean; missing: Citation[] }> {
-  const missing: Citation[] = [];
-  for (const c of citations) {
-    const table =
-      c.kind === 'matter' ? schema.matters
-      : c.kind === 'task' ? schema.tasks
-      : c.kind === 'event' ? schema.events
-      : c.kind === 'file' ? schema.files
-      : c.kind === 'memo' ? schema.memos
-      : schema.staff;
-    const row = await db
-      .select({ id: table.id })
-      .from(table)
-      .where(eq(table.id, c.id))
-      .limit(1);
-    if (row.length === 0) missing.push(c);
-  }
-  return { valid: missing.length === 0, missing };
-}
