@@ -137,6 +137,11 @@ function Shell() {
 
       {!onChatPage && (
         <>
+          {/* Wide screens: chat permanently docked beside the page. */}
+          <aside className="chat-dock" aria-label="PAM chat">
+            <ChatPanel chatEnabled={chatEnabled} />
+          </aside>
+          {/* Mid-size screens: floating button + drawer. */}
           <button className="chat-fab" onClick={() => setDrawerOpen(true)} aria-label="Open PAM chat" title="Ask PAM ( / )">
             P·M
           </button>

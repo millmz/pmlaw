@@ -118,6 +118,27 @@ export const syncState = pgTable('sync_state', {
   lastSyncedAt: text('last_synced_at').notNull(),
 });
 
+/** Chat persistence: conversations survive reloads; "new conversation"
+ *  closes ALL open sessions server-side (the Ask Pam lesson — docs/05). */
+export const chatSessions = pgTable('chat_sessions', {
+  id: text('id').primaryKey(),
+  staffId: text('staff_id').notNull(),
+  closed: boolean('closed').notNull().default(false),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+});
+
+export const chatMessages = pgTable('chat_messages', {
+  id: integer('id').primaryKey().generatedAlwaysAsIdentity(),
+  sessionId: text('session_id').notNull(),
+  /** 'user' | 'assistant' display text, plus the full LLM message JSON. */
+  role: text('role').notNull(),
+  displayText: text('display_text').notNull(),
+  llmJson: jsonb('llm_json'),
+  citations: jsonb('citations'),
+  at: timestamp('at', { withTimezone: true }).notNull().defaultNow(),
+});
+
 /** Audit log for every tool invocation and (later) every write (docs/03). */
 export const auditLog = pgTable('audit_log', {
   id: integer('id').primaryKey().generatedAlwaysAsIdentity(),

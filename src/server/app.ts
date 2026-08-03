@@ -2,7 +2,7 @@ import Fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest }
 import fastifyCookie from '@fastify/cookie';
 import fastifyStatic from '@fastify/static';
 import { createHmac, randomUUID, timingSafeEqual } from 'node:crypto';
-import { desc } from 'drizzle-orm';
+import { desc, eq } from 'drizzle-orm';
 import { existsSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -185,7 +185,36 @@ export function buildApp(deps: AppDeps): FastifyInstance {
   });
 
   // ------------------------------------------------------------------ chat
-  const sessions = new Map<string, LlmMessage[]>();
+  // Server-side persistence: conversations survive reloads and resume the
+  // most recent OPEN session under 24h; "new conversation" closes ALL open
+  // sessions server-side (docs/05 lesson).
+
+  const openSession = async (): Promise<{ id: string; history: LlmMessage[] } | null> => {
+    const dayAgo = new Date(Date.now() - 24 * 3600 * 1000);
+    const rows = await ctx.db.select().from(schema.chatSessions).orderBy(desc(schema.chatSessions.updatedAt)).limit(5);
+    const open = rows.find((r) => !r.closed && r.staffId === ctx.currentStaffId && r.updatedAt > dayAgo);
+    if (!open) return null;
+    const msgs = await ctx.db.select().from(schema.chatMessages).where(eq(schema.chatMessages.sessionId, open.id)).orderBy(schema.chatMessages.id);
+    const history = msgs.flatMap((m) => (m.llmJson as LlmMessage[] | null) ?? []);
+    return { id: open.id, history };
+  };
+
+  app.get('/api/chat/history', async () => {
+    const dayAgo = new Date(Date.now() - 24 * 3600 * 1000);
+    const rows = await ctx.db.select().from(schema.chatSessions).orderBy(desc(schema.chatSessions.updatedAt)).limit(5);
+    const open = rows.find((r) => !r.closed && r.staffId === ctx.currentStaffId && r.updatedAt > dayAgo);
+    if (!open) return { sessionId: null, messages: [] };
+    const msgs = await ctx.db.select().from(schema.chatMessages).where(eq(schema.chatMessages.sessionId, open.id)).orderBy(schema.chatMessages.id);
+    return {
+      sessionId: open.id,
+      messages: msgs.map((m) => ({ role: m.role, text: m.displayText, citations: m.citations ?? [] })),
+    };
+  });
+
+  app.post('/api/chat/new', async () => {
+    await ctx.db.update(schema.chatSessions).set({ closed: true }).where(eq(schema.chatSessions.staffId, ctx.currentStaffId));
+    return { ok: true };
+  });
 
   app.post('/api/chat/stream', async (req, reply) => {
     if (!deps.llm) {
@@ -193,7 +222,7 @@ export function buildApp(deps: AppDeps): FastifyInstance {
         error: 'Chat isn’t configured yet — the server needs an ANTHROPIC_API_KEY.',
       });
     }
-    const { sessionId, message } = (req.body ?? {}) as { sessionId?: string; message?: string };
+    const { message } = (req.body ?? {}) as { message?: string };
     if (!message?.trim()) return reply.code(400).send({ error: 'Empty message.' });
 
     reply.raw.writeHead(200, {
@@ -203,18 +232,38 @@ export function buildApp(deps: AppDeps): FastifyInstance {
     });
     const send = (payload: unknown) => reply.raw.write(`data: ${JSON.stringify(payload)}\n\n`);
 
-    const sid = sessionId && sessions.has(sessionId) ? sessionId : randomUUID();
-    const history = sessions.get(sid) ?? [];
-
     try {
-      const turn = await runAgentTurn(ctx, deps.llm, history, message, {
+      let session = await openSession();
+      if (!session) {
+        const id = randomUUID();
+        await ctx.db.insert(schema.chatSessions).values({ id, staffId: ctx.currentStaffId });
+        session = { id, history: [] };
+      }
+
+      const turn = await runAgentTurn(ctx, deps.llm, session.history, message, {
         onText: (delta) => send({ type: 'text_delta', text: delta }),
         onTool: (name) => send({ type: 'tool', name }),
       });
-      sessions.set(sid, turn.messages);
+
+      const newLlmMessages = turn.messages.slice(session.history.length);
+      await ctx.db.insert(schema.chatMessages).values([
+        { sessionId: session.id, role: 'user', displayText: message, llmJson: null, citations: null },
+        {
+          sessionId: session.id,
+          role: 'assistant',
+          displayText: turn.text,
+          llmJson: newLlmMessages,
+          citations: turn.citations,
+        },
+      ]);
+      await ctx.db
+        .update(schema.chatSessions)
+        .set({ updatedAt: new Date() })
+        .where(eq(schema.chatSessions.id, session.id));
+
       send({
         type: 'done',
-        sessionId: sid,
+        sessionId: session.id,
         text: turn.text,
         citations: turn.citations,
         citationsValid: turn.citationsValid,
