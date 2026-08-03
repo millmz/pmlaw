@@ -93,6 +93,57 @@ export function buildApp(deps: AppDeps): FastifyInstance {
   // ------------------------------------------------------------------ data
   app.get('/api/today', async () => getTodayData(ctx));
 
+  /** One day's schedule + tasks due that day — powers the Today day-tabs. */
+  app.get('/api/day', async (req) => {
+    const { date } = req.query as { date?: string };
+    const { appNow, FIRM_TZ } = await import('../core/dates.js');
+    const { DateTime } = await import('luxon');
+    const now = appNow(ctx.fixedNowIso);
+    const target = date
+      ? DateTime.fromISO(date, { zone: FIRM_TZ }).startOf('day')
+      : now.setZone(FIRM_TZ).startOf('day');
+    const iso = target.toISODate()!;
+    const isToday = target.hasSame(now.setZone(FIRM_TZ), 'day');
+
+    const events = await runTool(ctx, 'get_calendar_events', { scope: 'range', from: iso, to: iso });
+    const allTasks = await runTool(ctx, 'get_tasks', { status: 'all_open' });
+    const buckets = allTasks.data as {
+      overdue: { dueDate?: string | null }[];
+      dueToday: { dueDate?: string | null }[];
+      upcoming: { dueDate?: string | null }[];
+    };
+    const tasksDue = isToday
+      ? buckets.dueToday
+      : [...buckets.upcoming, ...buckets.overdue].filter((t) => t.dueDate === iso);
+
+    return {
+      dateIso: iso,
+      isToday,
+      todayIso: now.setZone(FIRM_TZ).toISODate(),
+      label: target.toFormat(isToday ? "'Today —' cccc, LLLL d" : 'cccc, LLLL d'),
+      events: (events.data as { events: unknown[] }).events,
+      tasksDue,
+      asOf: events.asOf,
+    };
+  });
+
+  /** Full task buckets — powers the Tasks page. */
+  app.get('/api/tasks', async () => {
+    const [all, overdue] = [
+      await runTool(ctx, 'get_tasks', { status: 'all_open' }),
+      await runTool(ctx, 'get_tasks', { status: 'overdue' }),
+    ];
+    const allData = all.data as { dueToday: unknown[]; upcoming: unknown[] };
+    const od = overdue.data as { needsDecision: unknown[]; statuteReminders: unknown };
+    return {
+      dueToday: allData.dueToday,
+      upcoming: allData.upcoming,
+      needsDecision: od.needsDecision,
+      statuteReminders: od.statuteReminders,
+      asOf: all.asOf,
+    };
+  });
+
   app.get('/api/matters', async (req) => {
     const q = req.query as { clientName?: string; practiceArea?: string; status?: string };
     const result = await runTool(ctx, 'search_matters', {

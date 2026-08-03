@@ -74,13 +74,32 @@ describe('golden dataset invariants', () => {
     expect(data.matters.find((m) => m.id === 'm-marino')?.status).toBe('Closed');
   });
 
-  it('today has three events for Jeff and one for Frank', () => {
+  it("today matches Jeff's real density: six events for him, one for Frank alone", () => {
     const today = data.events.filter((e) => {
       const d = DateTime.fromISO(e.startTime, { zone: FIRM_TZ });
       return d.hasSame(now, 'day');
     });
-    expect(today.filter((e) => e.attendeeIds.includes('s-jeff'))).toHaveLength(3);
+    expect(today.filter((e) => e.attendeeIds.includes('s-jeff'))).toHaveLength(6);
     expect(today.filter((e) => e.attendeeIds.includes('s-frank') && !e.attendeeIds.includes('s-jeff'))).toHaveLength(1);
+  });
+
+  it("due-today volume matches Jeff's real 10-12", () => {
+    const due = data.tasks.filter(
+      (t) => !t.isCompleted && t.assigneeIds.includes('s-jeff') && t.dueDate === now.toISODate(),
+    );
+    expect(due.length).toBeGreaterThanOrEqual(10);
+    expect(due.length).toBeLessThanOrEqual(12);
+  });
+
+  it("Jeff's week runs 15-20 events", () => {
+    const weekStart = now.startOf('week');
+    const weekEnd = weekStart.plus({ days: 6 }).endOf('day');
+    const week = data.events.filter((e) => {
+      const d = DateTime.fromISO(e.startTime, { zone: FIRM_TZ });
+      return d >= weekStart && d <= weekEnd && e.attendeeIds.includes('s-jeff');
+    });
+    expect(week.length).toBeGreaterThanOrEqual(13);
+    expect(week.length).toBeLessThanOrEqual(20);
   });
 
   it('next week Mon–Fri contains three court events including a shared JTM/FJP diary', () => {

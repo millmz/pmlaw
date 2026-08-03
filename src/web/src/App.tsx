@@ -11,26 +11,30 @@ import {
 import { api } from './api.js';
 import { ChatPanel } from './chat.js';
 import { TodayPage } from './pages/Today.js';
+import { TasksPage } from './pages/Tasks.js';
 import { MatterDetailPage, MattersPage } from './pages/Matters.js';
-import { ActivityPage, ChatPage, CourtsPage, LoginPage, SettlementsPage } from './pages/misc.js';
+import { ActivityPage, ChatPage, LoginPage, SettlementsPage } from './pages/misc.js';
 
 const qc = new QueryClient({ defaultOptions: { queries: { retry: 1, staleTime: 15_000 } } });
 
+/** Primary nav per Jeff's feedback (docs/10): quiet, four destinations. */
 const NAV = [
   { to: '/', label: 'Today', icon: '☀' },
   { to: '/chat', label: 'Chat', icon: '✉' },
-  { to: '/matters', label: 'Matters', icon: '▤' },
+  { to: '/tasks', label: 'Tasks', icon: '☑' },
   { to: '/settlements', label: 'Settlements', icon: '⚖' },
-  { to: '/courts', label: 'Courts', icon: '◫' },
+];
+const MORE = [
+  { to: '/matters', label: 'Matters', icon: '▤' },
   { to: '/activity', label: 'Activity', icon: '≡' },
 ];
 
 const TITLES: Record<string, string> = {
   '/': 'Today',
   '/chat': 'Chat',
-  '/matters': 'Matters',
+  '/tasks': 'Tasks',
   '/settlements': 'Settlements',
-  '/courts': 'Courts',
+  '/matters': 'Matters',
   '/activity': 'Activity',
 };
 
@@ -50,9 +54,14 @@ export function App() {
 function Shell() {
   const location = useLocation();
   const [drawerOpen, setDrawerOpen] = useState(false);
+  const [largeText, setLargeText] = useState(() => localStorage.getItem('pam-ts') === 'lg');
   const { data: me, isLoading } = useQuery({ queryKey: ['me'], queryFn: api.me });
 
-  // Keyboard shortcut: "/" opens the chat drawer anywhere on desktop.
+  useEffect(() => {
+    document.body.dataset['ts'] = largeText ? 'lg' : '';
+    localStorage.setItem('pam-ts', largeText ? 'lg' : '');
+  }, [largeText]);
+
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key === '/' && !(e.target instanceof HTMLInputElement) && !(e.target instanceof HTMLTextAreaElement)) {
@@ -85,6 +94,14 @@ function Shell() {
             {n.label}
           </NavLink>
         ))}
+        <div className="rail-more">
+          {MORE.map((n) => (
+            <NavLink key={n.to} to={n.to} className={({ isActive }) => `nav-link${isActive ? ' active' : ''}`}>
+              <span className="icon">{n.icon}</span>
+              {n.label}
+            </NavLink>
+          ))}
+        </div>
         <div className="rail-foot">
           <span className="rail-sub">{me?.user.name}<br />Mock data · dev build</span>
         </div>
@@ -94,16 +111,24 @@ function Shell() {
         <div className="topbar">
           <h1>{title}</h1>
           <div className="spacer" />
-          <span className="asof"><span className="dot" />Synced with Smokeball</span>
+          <button
+            className="ts-toggle"
+            aria-pressed={largeText}
+            onClick={() => setLargeText((v) => !v)}
+            title="Larger text"
+          >
+            A<span style={{ fontSize: '1.25em' }}>A</span>
+          </button>
+          <span className="asof"><span className="dot" />Synced</span>
         </div>
-        <div className="page">
+        <div className="page" style={onChatPage ? { padding: 0, overflow: 'hidden' } : undefined}>
           <Routes>
             <Route path="/" element={<TodayPage />} />
             <Route path="/chat" element={<ChatPage chatEnabled={chatEnabled} />} />
+            <Route path="/tasks" element={<TasksPage />} />
+            <Route path="/settlements" element={<SettlementsPage />} />
             <Route path="/matters" element={<MattersPage />} />
             <Route path="/matters/:id" element={<MatterDetailPage />} />
-            <Route path="/settlements" element={<SettlementsPage />} />
-            <Route path="/courts" element={<CourtsPage />} />
             <Route path="/activity" element={<ActivityPage />} />
             <Route path="*" element={<Navigate to="/" replace />} />
           </Routes>
@@ -129,6 +154,10 @@ function Shell() {
             {n.label}
           </NavLink>
         ))}
+        <NavLink to="/matters" className={({ isActive }) => (isActive ? 'active' : '')}>
+          <span className="icon">⋯</span>
+          More
+        </NavLink>
       </nav>
     </div>
   );

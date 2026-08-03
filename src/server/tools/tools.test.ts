@@ -28,22 +28,24 @@ afterAll(async () => {
 });
 
 describe('read tools', () => {
-  it("today's calendar: Jeff sees his 3 events in order, not Frank's", async () => {
+  it("today's calendar: Jeff sees his 6 events in order, not Frank's", async () => {
     const r = await runTool(ctx, 'get_calendar_events', { scope: 'today' });
     const d = r.data as { events: { subject: string }[]; calendar: string };
     expect(d.calendar).toContain('Jeff Millman');
-    expect(d.events).toHaveLength(3);
+    expect(d.events).toHaveLength(6);
     expect(d.events[0]!.subject).toContain('Clarkstown');
     expect(d.events.map((e) => e.subject).join(' ')).not.toContain('FJP Rockland Supreme');
-    expect(r.citations.length).toBe(3);
+    expect(r.citations.length).toBe(6);
     expect((await validateCitations(db, r.citations)).valid).toBe(true);
   });
 
   it("Frank's calendar by name resolves and scopes correctly", async () => {
     const r = await runTool(ctx, 'get_calendar_events', { scope: 'today', staffRef: 'Frank' });
     const d = r.data as { events: { subject: string }[] };
-    expect(d.events).toHaveLength(1);
-    expect(d.events[0]!.subject).toContain('Keller');
+    // Frank's own Keller conference + the shared Jeff/Frank Tran call.
+    expect(d.events).toHaveLength(2);
+    expect(d.events.map((e) => e.subject).join(' ')).toContain('Keller');
+    expect(d.events.map((e) => e.subject).join(' ')).not.toContain('Clarkstown');
   });
 
   it('next-week court list returns all three including the shared JTM/FJP diary', async () => {
@@ -66,10 +68,10 @@ describe('read tools', () => {
     expect(d.statuteReminders.note).toContain('never be rescheduled');
   });
 
-  it('due-today excludes completed tasks and other assignees', async () => {
+  it('due-today excludes completed tasks and other assignees, at real density', async () => {
     const r = await runTool(ctx, 'get_tasks', { status: 'due_today' });
     const d = r.data as { tasks: { subject: string }[] };
-    expect(d.tasks).toHaveLength(3);
+    expect(d.tasks).toHaveLength(11);
     for (const t of d.tasks) expect(t.subject).not.toContain('Serve discovery'); // completed
   });
 
@@ -103,14 +105,14 @@ describe('read tools', () => {
     expect(d.notes[0]!.lastEditedBy).toContain('Isabel');
   });
 
-  it('stalled matters finds Whitfield, Bailey, and Ricci — and nothing else', async () => {
+  it('stalled matters finds Whitfield and Bailey — and nothing else', async () => {
     const r = await runTool(ctx, 'find_stalled_matters', {});
     const d = r.data as { matters: { label: string }[] };
     const labels = d.matters.map((m) => m.label).join(' ');
     expect(labels).toContain('Whitfield'); // the designed stalled case
     expect(labels).toContain('Bailey'); // prepared-not-sent trap: no follow-up task either
-    expect(labels).toContain('Ricci'); // mailed 45 days ago, follow-up completed, nothing since
-    expect(d.matters).toHaveLength(3);
+    // Ricci is no longer stalled: the lien-ledger review task (due today) is open on it.
+    expect(d.matters).toHaveLength(2);
   });
 
   it('unknown staff reference returns a clarification, not a guess', async () => {

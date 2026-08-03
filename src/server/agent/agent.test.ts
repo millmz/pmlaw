@@ -73,8 +73,8 @@ describe('agent loop', () => {
     const turn = await runAgentTurn(ctx, llm, [], 'What does my day look like?');
     expect(turn.text).toContain('Good morning');
     expect(turn.toolCalls.map((c) => c.name)).toEqual(['get_calendar_events', 'get_tasks']);
-    // 3 events + 3 overdue tasks cited, all real records:
-    expect(turn.citations.length).toBe(6);
+    // 6 events + 3 overdue tasks cited, all real records:
+    expect(turn.citations.length).toBe(9);
     expect(turn.citationsValid).toBe(true);
     // Tool results were threaded back as tool_result blocks:
     const toolResultMsg = turn.messages.find(

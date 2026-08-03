@@ -1,9 +1,9 @@
 import { expect, test } from '@playwright/test';
 
 /**
- * M1 smoke: login → Today (Jeff's order, statute split) → Matters (ambiguity)
- * → matter page (notes verbatim) → chat-disabled honesty. Screenshots land in
- * e2e/screenshots/ for the milestone review.
+ * M2 smoke: login → Today (day tabs, quiet layout, real density) → Tasks
+ * (overdue + statute home) → Move-to-chat prefill → Matters ambiguity →
+ * notes verbatim → text-size toggle → mobile tabs → chat honesty.
  */
 
 test('login gate: wrong code rejected, right code opens Today', async ({ page }) => {
@@ -19,53 +19,93 @@ test('login gate: wrong code rejected, right code opens Today', async ({ page })
   await page.screenshot({ path: 'e2e/screenshots/01-login.png' });
 });
 
-test('Today renders Jeff’s order with statute reminders split out', async ({ page }) => {
+test('Today is quiet and big: one day, its tasks, nothing else', async ({ page }) => {
   await login(page);
-  await expect(page.getByText('Today’s calendar')).toBeVisible();
-  await expect(page.getByText('Up next')).toBeVisible();
+  // Day tabs present, Today active.
+  await expect(page.getByRole('tab', { name: /Today/ })).toBeVisible();
+  // Schedule at real density with the first court appearance.
   await expect(page.getByText('Clarkstown', { exact: false }).first()).toBeVisible();
-  await expect(page.getByText('Overdue — needs a decision')).toBeVisible();
-  // Statute section exists, is collapsed, and carries the leave-as-is label.
-  const statute = page.locator('details.statute');
-  await expect(statute.getByText('tracked — leave as-is')).toBeVisible();
-  await expect(statute.getByText('Petrov', { exact: false }).first()).toBeHidden(); // collapsed by default
-  await statute.locator('summary').click();
-  await expect(statute.getByText('Petrov', { exact: false }).first()).toBeVisible();
-  // Watchlist shows the stalled matters.
-  await expect(page.getByText('Watchlist — no next step scheduled')).toBeVisible();
+  await expect(page.getByText('6 events')).toBeVisible();
+  // Tasks due today at Jeff's real volume.
+  await expect(page.getByText('Tasks due today')).toBeVisible();
+  await expect(page.locator('.card').filter({ hasText: 'Tasks due today' }).locator('.count')).toHaveText('11');
+  // The noise is gone from the home page.
+  await expect(page.getByText('Up next')).toHaveCount(0);
+  await expect(page.getByText('needs a decision')).toHaveCount(0);
+  await expect(page.locator('details.statute')).toHaveCount(0); // statute section lives on /tasks now
+  await expect(page.getByText('Watchlist')).toHaveCount(0);
   await page.screenshot({ path: 'e2e/screenshots/02-today.png', fullPage: true });
 });
 
-test('Matters search flags ambiguity and matter page shows notes verbatim', async ({ page }) => {
+test('day tabs switch the calendar to that day', async ({ page }) => {
+  await login(page);
+  // Second tab is tomorrow (a weekday in golden data: Tuesday Jul 28).
+  const tabs = page.locator('.daytab');
+  await tabs.nth(1).click();
+  await expect(page.getByText(/calendar$/).first()).toBeVisible(); // "…, July 28 calendar"
+  await expect(page.getByText('Deposition of plaintiff - Okafor', { exact: false })).toBeVisible();
+  await page.screenshot({ path: 'e2e/screenshots/03-daytab.png' });
+});
+
+test('Tasks page holds due today, overdue split, and statute reminders', async ({ page }) => {
+  await login(page);
+  await page.getByRole('link', { name: 'Tasks' }).first().click();
+  await expect(page.getByText('Due today')).toBeVisible();
+  await expect(page.getByText('Overdue — needs a decision')).toBeVisible();
+  await expect(page.getByText('22d late')).toBeVisible();
+  const statute = page.locator('details.statute');
+  await expect(statute.getByText('tracked — leave as-is')).toBeVisible();
+  await statute.locator('summary').click();
+  await expect(statute.getByText('Petrov', { exact: false }).first()).toBeVisible();
+  // Statute rows carry no Move button; regular rows do.
+  await expect(statute.getByRole('button', { name: 'Move to…' })).toHaveCount(0);
+  await page.screenshot({ path: 'e2e/screenshots/04-tasks.png', fullPage: true });
+});
+
+test('Move to… opens chat pre-filled with the reschedule ask', async ({ page }) => {
+  await login(page);
+  await page.getByRole('link', { name: 'Tasks' }).first().click();
+  await page.getByRole('button', { name: 'Move to…' }).first().click();
+  await expect(page).toHaveURL(/\/chat/);
+  const input = page.getByLabel('Message PAM');
+  await expect(input).toHaveValue(/^Move ".+" to $/);
+});
+
+test('Matters (under More) flags ambiguity; notes render verbatim', async ({ page }) => {
   await login(page);
   await page.getByRole('link', { name: 'Matters' }).click();
   await page.getByLabel('Search matters').fill('Juan');
   await expect(page.getByText('Several matches')).toBeVisible();
-  await expect(page.getByText('Delgado', { exact: false }).first()).toBeVisible();
-  await expect(page.getByText('Santos', { exact: false }).first()).toBeVisible();
-  await page.screenshot({ path: 'e2e/screenshots/03-ambiguous.png' });
-
   await page.getByLabel('Search matters').fill('Grasso');
   await page.getByRole('link', { name: /Grasso/ }).click();
   await expect(page.getByText('Statute of limitations:', { exact: false })).toBeVisible();
   await page.getByRole('button', { name: 'Notes' }).click();
   await expect(page.getByText('Demand: $250,000', { exact: false })).toBeVisible();
-  await expect(page.getByText('Jeff Millman (JTM), last edited', { exact: false }).first()).toBeVisible();
-  await page.screenshot({ path: 'e2e/screenshots/04-matter-notes.png', fullPage: true });
+  await page.screenshot({ path: 'e2e/screenshots/05-matter-notes.png' });
 });
 
-test('mobile layout: tab bar navigation works', async ({ page }) => {
+test('text-size toggle enlarges the app and persists', async ({ page }) => {
+  await login(page);
+  await page.locator('.ts-toggle').click();
+  await expect(page.locator('body')).toHaveAttribute('data-ts', 'lg');
+  await page.reload();
+  await expect(page.locator('body')).toHaveAttribute('data-ts', 'lg');
+  await page.screenshot({ path: 'e2e/screenshots/06-large-text.png', fullPage: true });
+});
+
+test('mobile: four tabs + More, Tasks reachable', async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await login(page);
   await expect(page.locator('.tabbar')).toBeVisible();
-  await page.locator('.tabbar').getByText('Matters').click();
-  await expect(page.getByLabel('Search matters')).toBeVisible();
-  await page.screenshot({ path: 'e2e/screenshots/05-mobile-today.png' });
+  await page.locator('.tabbar').getByText('Tasks').click();
+  await expect(page.getByText('Overdue — needs a decision')).toBeVisible();
+  await page.screenshot({ path: 'e2e/screenshots/07-mobile.png', fullPage: true });
 });
 
 test('chat is honest when no API key is configured', async ({ page }) => {
   await login(page);
-  await page.getByRole('link', { name: 'Chat' }).click();
+  await page.locator('.tabbar, .rail').first();
+  await page.getByRole('link', { name: 'Chat' }).first().click();
   await expect(page.getByPlaceholder(/needs an api key/i)).toBeVisible();
   await expect(page.getByPlaceholder(/needs an api key/i)).toBeDisabled();
 });

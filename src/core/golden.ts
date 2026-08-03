@@ -299,7 +299,7 @@ export function buildGoldenDataset(anchorIso: string = GOLDEN_ANCHOR_ISO): FirmD
       dueDate: day(-9),
       createdById: 's-isabel',
     }),
-    // Due today ×3 for Jeff.
+    // Due today ×11 for Jeff — his real daily volume (docs/10 §6).
     mkTask('JTM - Respond to Hughes offer of $85,000', {
       matterId: 'm-hughes',
       assigneeIds: ['s-jeff'],
@@ -312,6 +312,44 @@ export function buildGoldenDataset(anchorIso: string = GOLDEN_ANCHOR_ISO): FirmD
     }),
     mkTask('JTM - Return call to client Daniel Okafor', {
       matterId: 'm-okafor',
+      assigneeIds: ['s-jeff'],
+      dueDate: day(0),
+    }),
+    mkTask('JTM - Review draft bill of particulars - Delgado', {
+      matterId: 'm-delgado',
+      assigneeIds: ['s-jeff'],
+      dueDate: day(0),
+    }),
+    mkTask('JTM - Sign retainer letters from Friday intakes', {
+      assigneeIds: ['s-jeff'],
+      dueDate: day(0),
+    }),
+    mkTask('JTM - Prep cross for Vasquez suppression hearing', {
+      matterId: 'm-vasquez',
+      assigneeIds: ['s-jeff'],
+      dueDate: day(0),
+    }),
+    mkTask('JTM - Call Dr. Feldman office re Tran IME report', {
+      matterId: 'm-tran',
+      assigneeIds: ['s-jeff'],
+      dueDate: day(0),
+    }),
+    mkTask('JTM - Approve Keller expert disclosure', {
+      matterId: 'm-keller',
+      assigneeIds: ['s-jeff'],
+      dueDate: day(0),
+    }),
+    mkTask('JTM - Return call to referring counsel re new MVA case', {
+      assigneeIds: ['s-jeff'],
+      dueDate: day(0),
+    }),
+    mkTask('JTM - Review Ricci lien ledger with Isabel', {
+      matterId: 'm-ricci',
+      assigneeIds: ['s-jeff', 's-isabel'],
+      dueDate: day(0),
+    }),
+    mkTask('JTM - Confirm Wednesday pretrial with client Vasquez', {
+      matterId: 'm-vasquez',
       assigneeIds: ['s-jeff'],
       dueDate: day(0),
     }),
@@ -401,11 +439,39 @@ export function buildGoldenDataset(anchorIso: string = GOLDEN_ANCHOR_ISO): FirmD
       location: 'Calloway & Reed LLP, Nanuet',
     }),
     mkEvent('JTM Client call - Delgado intake follow-up', 0, 14, 30, { matterId: 'm-delgado' }),
-    // Later this week.
+    // More of today — Jeff's real days run 5-6 entries (docs/10).
+    mkEvent('JTM Village of Haverstraw Justice Court - Ramos VTL matter', 0, 16, 45, {
+      location: 'Village of Haverstraw Justice Court',
+    }),
+    mkEvent('JTM New client meeting - MVA referral from Dr. Patel', 0, 17, 30, {}),
+    mkEvent('JTM Call with Frank re Tran settlement posture', ts(0, 12, 30), 0, 30, {
+      matterId: 'm-tran',
+      attendeeIds: ['s-jeff', 's-frank'],
+    }),
+    // Later this week — his weeks run 15-20 events.
     mkEvent('JTM Rockland County Court Judge Schwartz - Vasquez pretrial', 2, 9, 60, {
       matterId: 'm-vasquez',
       location: 'Rockland County Courthouse, New City',
     }),
+    mkEvent('JTM Deposition of plaintiff - Okafor', 1, 10, 180, {
+      matterId: 'm-okafor',
+      location: 'Our offices, Stony Point',
+    }),
+    mkEvent('JTM Closing - DeLuca refinance', 1, 15, 60, {}),
+    mkEvent('JTM Clarkstown Justice Court - Santos conference', 2, 14, 45, {
+      matterId: 'm-santos',
+      location: 'Town of Clarkstown Justice Court',
+    }),
+    mkEvent('JTM Client meeting - Petrov statute review', 3, 10, 45, { matterId: 'm-petrov' }),
+    mkEvent('JTM Mediation - Hughes v. Beacon National', 3, 13, 240, {
+      matterId: 'm-hughes',
+      location: 'NAM, White Plains',
+    }),
+    mkEvent('JTM Rockland Supreme - Keller status conference', 4, 9, 30, {
+      matterId: 'm-keller',
+      location: 'Rockland Supreme, New City',
+    }),
+    mkEvent('JTM Office hours - open client calls', 4, 15, 120, {}),
     // Frank's event today (not Jeff's) — person-scoping case.
     mkEvent('FJP Rockland Supreme - Keller compliance conference', 0, 10, 60, {
       matterId: 'm-keller',

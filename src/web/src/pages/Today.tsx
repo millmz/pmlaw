@@ -1,185 +1,164 @@
+import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
-import { api, fmtDay, fmtTime, type ApiEvent, type ApiTask } from '../api.js';
+import { fmtTime, type ApiEvent, type ApiTask } from '../api.js';
+
+/**
+ * Today v2 — Jeff's design (docs/10): one day at a time, big. "Today" plus
+ * tabs for upcoming weekdays; tap Aug 5 and the August 5 calendar jumps up.
+ * Nothing else on this page: schedule + that day's tasks.
+ */
+
+interface DayData {
+  dateIso: string;
+  isToday: boolean;
+  todayIso: string;
+  label: string;
+  events: ApiEvent[];
+  tasksDue: ApiTask[];
+  asOf: string;
+}
+
+async function fetchDay(date?: string): Promise<DayData> {
+  const res = await fetch(`/api/day${date ? `?date=${date}` : ''}`);
+  if (res.status === 401) {
+    window.location.href = '/login';
+    throw new Error('unauthenticated');
+  }
+  if (!res.ok) throw new Error('failed');
+  return res.json() as Promise<DayData>;
+}
+
+/** Next N weekdays starting from a given ISO date (inclusive). */
+function weekdayTabs(todayIso: string, n = 10): { iso: string; dow: string; label: string }[] {
+  const out: { iso: string; dow: string; label: string }[] = [];
+  const d = new Date(`${todayIso}T12:00:00`);
+  while (out.length < n) {
+    const dow = d.getDay();
+    if (dow !== 0 && dow !== 6) {
+      const iso = d.toISOString().slice(0, 10);
+      out.push({
+        iso,
+        dow: d.toLocaleDateString('en-US', { weekday: 'short' }),
+        label:
+          iso === todayIso
+            ? 'Today'
+            : d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }),
+      });
+    }
+    d.setDate(d.getDate() + 1);
+  }
+  return out;
+}
 
 export function TodayPage() {
-  const { data, isLoading, error } = useQuery({ queryKey: ['today'], queryFn: api.today, refetchInterval: 60_000 });
+  const [selected, setSelected] = useState<string | undefined>(undefined);
+  const { data, isLoading } = useQuery({
+    queryKey: ['day', selected ?? 'today'],
+    queryFn: () => fetchDay(selected),
+    refetchInterval: 60_000,
+  });
 
-  if (isLoading)
-    return (
-      <div className="page-inner">
-        {[1, 2, 3].map((i) => (
-          <div className="card" key={i}>
-            <div className="card-body">
-              <div className="skeleton" style={{ width: '38%' }} />
-              <div className="skeleton" />
-              <div className="skeleton" style={{ width: '72%' }} />
-            </div>
-          </div>
-        ))}
-      </div>
-    );
-  if (error || !data)
-    return <div className="page-inner"><div className="empty">Couldn’t load today’s brief — try refreshing. If it persists, the sync may be down.</div></div>;
-
-  const next = nextEvent(data.todayEvents, data.nowIso);
+  const tabs = data ? weekdayTabs(data.todayIso) : [];
+  const active = selected ?? data?.todayIso;
 
   return (
     <div className="page-inner">
-      {next && (
-        <div className="now-strip">
-          <div className="label">Up next</div>
-          <div className="what">{next.event.subject}</div>
-          <div className="when">
-            {fmtTime(next.event.start)}
-            {next.event.location ? ` · ${next.event.location}` : ''} — {next.inWords}
+      {tabs.length > 0 && (
+        <div className="daytabs" role="tablist" aria-label="Pick a day">
+          {tabs.map((t) => (
+            <button
+              key={t.iso}
+              role="tab"
+              aria-selected={t.iso === active}
+              className={`daytab${t.iso === active ? ' active' : ''}`}
+              onClick={() => setSelected(t.iso === data?.todayIso ? undefined : t.iso)}
+            >
+              <span className="dow">{t.dow}</span>
+              {t.label}
+            </button>
+          ))}
+        </div>
+      )}
+
+      {isLoading || !data ? (
+        <div className="card">
+          <div className="card-body">
+            <div className="skeleton" style={{ width: '40%' }} />
+            <div className="skeleton" />
+            <div className="skeleton" style={{ width: '70%' }} />
           </div>
         </div>
-      )}
-
-      <Section title="Today’s calendar" count={data.todayEvents.length} emptyText="No events on your calendar today.">
-        {data.todayEvents.map((e) => (
-          <EventRow key={e.id} e={e} />
-        ))}
-      </Section>
-
-      <Section title="Rest of this week" count={data.weekEvents.length} emptyText="Nothing further scheduled this week.">
-        {data.weekEvents.map((e) => (
-          <EventRow key={e.id} e={e} withDay />
-        ))}
-      </Section>
-
-      {data.nextWeekCourts && (
-        <Section
-          title="Next week’s courts (Mon–Fri)"
-          count={data.nextWeekCourts.length}
-          emptyText="No court appearances scheduled next week yet."
-        >
-          {data.nextWeekCourts.map((e) => (
-            <EventRow key={e.id} e={e} withDay />
-          ))}
-        </Section>
-      )}
-
-      <Section title="Due today" count={data.dueToday.length} emptyText="Nothing due today.">
-        {data.dueToday.map((t) => (
-          <TaskRow key={t.id} t={t} />
-        ))}
-      </Section>
-
-      <Section
-        title="Overdue — needs a decision"
-        count={data.overdue.needsDecision.length}
-        emptyText="Clean — nothing waiting on you."
-      >
-        {data.overdue.needsDecision.map((t) => (
-          <TaskRow key={t.id} t={t} overdue />
-        ))}
-      </Section>
-
-      <div className="card">
-        <div className="card-body">
-          <details className="statute">
-            <summary>
-              Statute reminders <span className="count">{data.overdue.statuteReminders.tasks.length}</span>
-              <span className="pill info">tracked — leave as-is</span>
-            </summary>
-            <div className="statute-note">{data.overdue.statuteReminders.note}</div>
-            {data.overdue.statuteReminders.tasks.map((t) => (
-              <TaskRow key={t.id} t={t} />
-            ))}
-          </details>
-        </div>
-      </div>
-
-      {data.watchlist.stalledMatters.length > 0 && (
-        <Section title="Watchlist — no next step scheduled" count={data.watchlist.stalledMatters.length} emptyText="">
-          {data.watchlist.stalledMatters.map((m) => (
-            <div className="row" key={m.id}>
-              <span className="t"><span className="pill warn">Stalled</span></span>
-              <span className="grow">
-                <Link className="matter-chip" to={`/matters/${m.id}`}>{m.label}</Link>
-                <div className="meta">No open task or upcoming event · last activity {new Date(m.lastActivity).toLocaleDateString()}</div>
-              </span>
+      ) : (
+        <>
+          <div className="card">
+            <div className="card-h">
+              <h2>{data.isToday ? data.label : `${data.label} calendar`}</h2>
+              <span className="rule" />
+              <span className="count">{data.events.length} events</span>
             </div>
-          ))}
-        </Section>
+            <div className="card-body">
+              {data.events.length === 0 && (
+                <div className="empty">Nothing on the calendar {data.isToday ? 'today' : 'this day'}.</div>
+              )}
+              {data.events.map((e) => (
+                <div className="sched-row" key={e.id}>
+                  <div className="sched-time">
+                    {fmtTime(e.start)}
+                    <span className="end">to {fmtTime(e.end)}</span>
+                  </div>
+                  <div className="sched-body">
+                    <b>{e.subject}</b>
+                    <div className="meta">
+                      {e.location ? `${e.location}` : ''}
+                      {e.location && e.matter ? ' · ' : ''}
+                      {e.matterId && e.matter ? (
+                        <Link className="matter-chip" to={`/matters/${e.matterId}`}>
+                          {e.matter}
+                        </Link>
+                      ) : (
+                        e.matter
+                      )}
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          <div className="card">
+            <div className="card-h">
+              <h2>{data.isToday ? 'Tasks due today' : 'Tasks due this day'}</h2>
+              <span className="rule" />
+              <span className="count">{data.tasksDue.length}</span>
+            </div>
+            <div className="card-body">
+              {data.tasksDue.length === 0 && <div className="empty">Nothing due.</div>}
+              {data.tasksDue.map((t) => (
+                <div className="row" key={t.id}>
+                  <span className="grow">
+                    <b>{t.subject}</b>
+                    <div className="meta">
+                      {t.matterId && t.matter ? (
+                        <Link className="matter-chip" to={`/matters/${t.matterId}`}>
+                          {t.matter}
+                        </Link>
+                      ) : (
+                        t.matter
+                      )}
+                    </div>
+                  </span>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          <div className="empty" style={{ textAlign: 'center' }}>
+            Data as of {fmtTime(data.asOf)} · overdue and statute reminders live under{' '}
+            <Link to="/tasks" className="matter-chip">Tasks</Link>
+          </div>
+        </>
       )}
-
-      <div className="empty" style={{ textAlign: 'center' }}>
-        {data.dateLabel} · {data.citationCount} Smokeball records · data as of {fmtTime(data.asOf)}
-      </div>
     </div>
   );
-}
-
-function Section({
-  title,
-  count,
-  emptyText,
-  children,
-}: {
-  title: string;
-  count: number;
-  emptyText: string;
-  children: React.ReactNode;
-}) {
-  return (
-    <div className="card">
-      <div className="card-h">
-        <h2>{title}</h2>
-        <span className="count">{count}</span>
-      </div>
-      <div className="card-body">{count === 0 ? <div className="empty">{emptyText}</div> : children}</div>
-    </div>
-  );
-}
-
-function EventRow({ e, withDay }: { e: ApiEvent; withDay?: boolean }) {
-  return (
-    <div className="row">
-      <span className="t">{withDay ? fmtDay(e.start) : `${fmtTime(e.start)}–${fmtTime(e.end)}`}</span>
-      <span className="grow">
-        <b>{e.subject}</b>
-        <div className="meta">
-          {withDay ? `${fmtTime(e.start)} · ` : ''}
-          {e.location ? `${e.location} · ` : ''}
-          {e.matterId && e.matter ? <Link className="matter-chip" to={`/matters/${e.matterId}`}>{e.matter}</Link> : e.matter}
-        </div>
-      </span>
-    </div>
-  );
-}
-
-const fmtDue = (iso: string) =>
-  new Date(`${iso}T12:00:00`).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
-
-function TaskRow({ t, overdue }: { t: ApiTask; overdue?: boolean }) {
-  return (
-    <div className="row">
-      <span className="t">
-        {overdue ? <span className="pill alert">{t.daysOverdue}d late</span> : t.dueDate ? fmtDue(t.dueDate) : ''}
-      </span>
-      <span className="grow">
-        <b>{t.subject}</b>
-        <div className="meta">
-          {t.matterId && t.matter ? <Link className="matter-chip" to={`/matters/${t.matterId}`}>{t.matter}</Link> : t.matter}
-        </div>
-      </span>
-    </div>
-  );
-}
-
-function nextEvent(events: ApiEvent[], nowIso: string): { event: ApiEvent; inWords: string } | null {
-  const now = new Date(nowIso).getTime();
-  for (const e of events) {
-    const start = new Date(e.start).getTime();
-    if (start > now) {
-      const mins = Math.round((start - now) / 60_000);
-      const inWords =
-        mins < 60 ? `in ${mins} min` : `in ${Math.floor(mins / 60)}h ${String(mins % 60).padStart(2, '0')}m`;
-      return { event: e, inWords };
-    }
-  }
-  return null;
 }

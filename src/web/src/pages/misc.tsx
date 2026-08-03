@@ -1,42 +1,8 @@
 import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { Link } from 'react-router-dom';
-import { api, fmtDay, fmtTime } from '../api.js';
+import { useLocation } from 'react-router-dom';
+import { api } from '../api.js';
 import { ChatPanel } from '../chat.js';
-
-export function CourtsPage() {
-  const [scope, setScope] = useState<'this_week' | 'next_week_courts'>('next_week_courts');
-  const { data, isLoading } = useQuery({ queryKey: ['courts', scope], queryFn: () => api.courts(scope) });
-  return (
-    <div className="page-inner">
-      <div className="card">
-        <div className="card-body" style={{ display: 'flex', gap: 8, paddingTop: 14 }}>
-          <button className="btn ghost" style={scope === 'this_week' ? { borderColor: 'var(--gold)', color: 'var(--ink)' } : {}} onClick={() => setScope('this_week')}>This week</button>
-          <button className="btn ghost" style={scope === 'next_week_courts' ? { borderColor: 'var(--gold)', color: 'var(--ink)' } : {}} onClick={() => setScope('next_week_courts')}>Next week Mon–Fri</button>
-        </div>
-      </div>
-      <div className="card">
-        <div className="card-h"><h2>Office calendar — court &amp; appearances</h2><span className="count">{data?.events.length ?? '…'}</span></div>
-        <div className="card-body">
-          {isLoading && <div className="skeleton" />}
-          {data?.events.length === 0 && <div className="empty">Nothing scheduled in this window.</div>}
-          {data?.events.map((e) => (
-            <div className="row" key={e.id}>
-              <span className="t">{fmtDay(e.start)}</span>
-              <span className="grow">
-                <b>{e.subject}</b>
-                <div className="meta">
-                  {fmtTime(e.start)} {e.location ? `· ${e.location} ` : ''}
-                  {e.matterId && e.matter ? <Link className="matter-chip" to={`/matters/${e.matterId}`}>{e.matter}</Link> : null}
-                </div>
-              </span>
-            </div>
-          ))}
-        </div>
-      </div>
-    </div>
-  );
-}
 
 export function SettlementsPage() {
   return (
@@ -63,7 +29,17 @@ export function ActivityPage() {
   return (
     <div className="page-inner">
       <div className="card">
-        <div className="card-h"><h2>Activity — every question and lookup, on the record</h2></div>
+        <div className="card-body" style={{ paddingTop: 14 }}>
+          <p style={{ margin: 0, maxWidth: '60ch' }}>
+            This is PAM's on-the-record log: every question asked and every Smokeball lookup she
+            made to answer it. When PAM starts making changes (calendaring, moving tasks), each
+            proposed and confirmed change appears here too — it's how you audit your assistant.
+            Nothing on this page is required daily reading.
+          </p>
+        </div>
+      </div>
+      <div className="card">
+        <div className="card-h"><h2>Recent activity</h2></div>
         <div className="card-body">
           {data?.entries.length === 0 && <div className="empty">No activity yet.</div>}
           {data?.entries.map((e) => (
@@ -82,9 +58,11 @@ export function ActivityPage() {
 }
 
 export function ChatPage({ chatEnabled }: { chatEnabled: boolean }) {
+  const location = useLocation();
+  const prefill = (location.state as { prefill?: string } | null)?.prefill;
   return (
     <div style={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
-      <ChatPanel chatEnabled={chatEnabled} />
+      <ChatPanel chatEnabled={chatEnabled} {...(prefill ? { prefill } : {})} />
     </div>
   );
 }

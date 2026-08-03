@@ -27,11 +27,11 @@ const TOOL_LABELS: Record<string, string> = {
   list_firm_staff: 'checking the roster…',
 };
 
-export function ChatPanel({ chatEnabled }: { chatEnabled: boolean }) {
+export function ChatPanel({ chatEnabled, prefill }: { chatEnabled: boolean; prefill?: string }) {
   const [messages, setMessages] = useState<ChatMsg[]>([]);
   const [toolNote, setToolNote] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
-  const [input, setInput] = useState('');
+  const [input, setInput] = useState(prefill ?? '');
   const sessionRef = useRef<string | null>(null);
   const threadRef = useRef<HTMLDivElement>(null);
 
