@@ -477,14 +477,18 @@ table.data td { padding: 10px 12px; border-bottom: 1px solid var(--line-soft); v
 .orb-back { position: absolute; top: 14px; left: 18px; }
 .orb-mute { position: absolute; top: 14px; right: 18px; }
 .orb-stage { flex: 1; min-height: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; width: 100%; }
+/* The canvas yields: it shrinks as the console grows, so the status line and
+   transcript never collide. The renderer centers itself in any aspect. */
 .orb-canvas {
-  width: min(64vmin, 460px); height: min(64vmin, 460px);
+  width: min(72vmin, 520px); max-width: 100%;
+  flex: 1 1 auto; min-height: 150px;
   cursor: pointer; touch-action: manipulation;
 }
 .orb-status {
+  flex: none;
   font-family: var(--display); font-size: 12px; letter-spacing: 0.34em;
   text-transform: uppercase; color: var(--frame-ink-dim);
-  display: flex; align-items: center; gap: 10px; margin-top: 6px;
+  display: flex; align-items: center; gap: 10px; margin: 6px 0 4px;
 }
 .orb-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--frame-ink-dim); }
 .orb-dot.s-listening { background: var(--brass-bright); box-shadow: 0 0 10px var(--brass-bright); }
@@ -493,6 +497,7 @@ table.data td { padding: 10px 12px; border-bottom: 1px solid var(--line-soft); v
 @keyframes orbpulse { 50% { opacity: 0.35; } }
 .orb-console {
   width: min(720px, 100%); max-height: 30vh; overflow-y: auto;
+  flex: none; margin-top: 8px;
   font-size: 15px; line-height: 1.6; display: flex; flex-direction: column; gap: 6px;
   mask-image: linear-gradient(to bottom, transparent, black 18%);
 }
