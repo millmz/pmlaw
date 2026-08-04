@@ -64,6 +64,13 @@ export function TodayPage() {
 
   return (
     <div className="page-inner">
+      {data && (
+        <header className="masthead">
+          <div className="firmline">Phillips &amp; Millman · Daily Docket</div>
+          <h2 className="docket-date">{data.label.replace('Today — ', '')}</h2>
+          <div className="double-rule" />
+        </header>
+      )}
       {tabs.length > 0 && (
         <div className="daytabs" role="tablist" aria-label="Pick a day">
           {tabs.map((t) => (
@@ -93,7 +100,8 @@ export function TodayPage() {
         <>
           <div className="card">
             <div className="card-h">
-              <h2>{data.isToday ? data.label : `${data.label} calendar`}</h2>
+              {/* Masthead carries the date; Jeff's "August 5 calendar" titling kept for other days. */}
+              <h2>{data.isToday ? 'Schedule' : `${data.label} calendar`}</h2>
               <span className="rule" />
               <span className="count">{data.events.length} events</span>
             </div>

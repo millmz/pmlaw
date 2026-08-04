@@ -128,19 +128,27 @@ export function buildApp(deps: AppDeps): FastifyInstance {
     };
   });
 
-  /** Full task buckets — powers the Tasks page. */
+  /** Full task buckets — powers the Tasks page. Statute reminders are pulled
+   *  out of EVERY bucket (not just overdue): they are never movable, so they
+   *  never belong next to a "Move to…" button. */
   app.get('/api/tasks', async () => {
+    const { isStatuteReminder } = await import('../core/dates.js');
     const [all, overdue] = [
       await runTool(ctx, 'get_tasks', { status: 'all_open' }),
       await runTool(ctx, 'get_tasks', { status: 'overdue' }),
     ];
-    const allData = all.data as { dueToday: unknown[]; upcoming: unknown[] };
-    const od = overdue.data as { needsDecision: unknown[]; statuteReminders: unknown };
+    type Row = { subject: string };
+    const allData = all.data as { dueToday: Row[]; upcoming: Row[] };
+    const od = overdue.data as { needsDecision: Row[]; statuteReminders: { note: string; tasks: Row[] } };
+    const statuteUpcoming = [...allData.dueToday, ...allData.upcoming].filter((t) => isStatuteReminder(t.subject));
     return {
-      dueToday: allData.dueToday,
-      upcoming: allData.upcoming,
+      dueToday: allData.dueToday.filter((t) => !isStatuteReminder(t.subject)),
+      upcoming: allData.upcoming.filter((t) => !isStatuteReminder(t.subject)),
       needsDecision: od.needsDecision,
-      statuteReminders: od.statuteReminders,
+      statuteReminders: {
+        note: od.statuteReminders.note,
+        tasks: [...od.statuteReminders.tasks, ...statuteUpcoming],
+      },
       asOf: all.asOf,
     };
   });

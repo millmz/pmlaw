@@ -11,7 +11,8 @@ export default defineConfig({
     ...(process.env['PW_CHROMIUM'] ? { launchOptions: { executablePath: process.env['PW_CHROMIUM'] } } : {}),
   },
   webServer: {
-    command: 'PORT=8799 PAM_ACCESS_CODE=e2e-code npx tsx src/server/main.ts',
+    // Blank the API keys so E2E is deterministic even when the shell has them.
+    command: 'PORT=8799 PAM_ACCESS_CODE=e2e-code PAM_ANTHROPIC_API_KEY= ANTHROPIC_API_KEY= npx tsx src/server/main.ts',
     url: 'http://127.0.0.1:8799/healthz',
     reuseExistingServer: true,
     timeout: 60_000,

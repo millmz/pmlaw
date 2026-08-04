@@ -86,8 +86,9 @@ function Shell() {
       <aside className="rail">
         <div className="rail-logo">
           <span className="bracket">P<b>A</b>M</span>
-          <span className="rail-sub">Phillips &amp;<br />Millman</span>
+          <span className="rail-sub">Phillips &amp; Millman<br />Attorneys at Law</span>
         </div>
+        <div className="rail-rule" />
         {NAV.map((n) => (
           <NavLink key={n.to} to={n.to} end={n.to === '/'} className={({ isActive }) => `nav-link${isActive ? ' active' : ''}`}>
             <span className="icon">{n.icon}</span>
@@ -103,7 +104,7 @@ function Shell() {
           ))}
         </div>
         <div className="rail-foot">
-          <span className="rail-sub">{me?.user.name}<br />Mock data · dev build</span>
+          <span className="rail-sub">{me?.user.name}<br />Mock data · Dev build</span>
         </div>
       </aside>
 
