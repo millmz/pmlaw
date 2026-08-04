@@ -190,11 +190,25 @@ export function buildApp(deps: AppDeps): FastifyInstance {
       .from(schema.appSettings)
       .where(eq(schema.appSettings.key, 'elevenlabs_voice_id'))
       .limit(1);
+    const { pamApiKeyInfo } = await import('./agent/loop.js');
+    const info = pamApiKeyInfo();
+    const elevenKey = (process.env['ELEVENLABS_API_KEY'] ?? '').trim();
     return {
       'identity.md': await getIdentity(ctx.db),
       'knowledge.md': await getKnowledge(ctx.db),
       elevenlabs_voice_id: voiceRow[0]?.value ?? '',
-      ttsConfigured: Boolean(process.env['ELEVENLABS_API_KEY']),
+      ttsConfigured: Boolean(elevenKey),
+      // Safe key audit: source + shape only, never the value.
+      brain: {
+        source: info.source,
+        prefix: info.prefix,
+        length: info.length,
+        looksAnthropic: info.looksAnthropic,
+        skipped: info.skipped,
+      },
+      voiceKey: elevenKey
+        ? { prefix: elevenKey.slice(0, 3), length: elevenKey.length, looksElevenLabs: !elevenKey.startsWith('sk-ant-') }
+        : null,
     };
   });
 
@@ -217,7 +231,7 @@ export function buildApp(deps: AppDeps): FastifyInstance {
   // ------------------------------------------------------------------ tts
   // ElevenLabs relay: the key stays server-side, restricted to synthesis.
   app.post('/api/tts', async (req, reply) => {
-    const apiKey = process.env['ELEVENLABS_API_KEY'];
+    const apiKey = (process.env['ELEVENLABS_API_KEY'] ?? '').trim();
     if (!apiKey) return reply.code(501).send({ error: 'no_tts_key' });
     const { text } = (req.body ?? {}) as { text?: string };
     if (!text?.trim()) return reply.code(400).send({ error: 'empty text' });

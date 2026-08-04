@@ -165,9 +165,41 @@ export async function runAgentTurn(
 
 /** The API key for PAM's own Anthropic calls. PAM_ANTHROPIC_API_KEY takes
  *  precedence because managed environments (e.g. Claude Code cloud sessions)
- *  reserve/strip the plain ANTHROPIC_API_KEY name. */
+ *  reserve/strip the plain ANTHROPIC_API_KEY name. Values are trimmed
+ *  (paste artifacts) and empty strings ignored, and the WRONG-vendor guard
+ *  skips a variable that plainly holds a non-Anthropic key rather than
+ *  letting it shadow a good one. */
 export function pamApiKey(): string | undefined {
-  return process.env['PAM_ANTHROPIC_API_KEY'] ?? process.env['ANTHROPIC_API_KEY'];
+  return pamApiKeyInfo().key;
+}
+
+export interface KeyInfo {
+  key?: string;
+  source: 'PAM_ANTHROPIC_API_KEY' | 'ANTHROPIC_API_KEY' | 'none';
+  prefix: string;
+  length: number;
+  looksAnthropic: boolean;
+  /** Variables that were present but skipped, with why — the audit trail. */
+  skipped: string[];
+}
+
+export function pamApiKeyInfo(): KeyInfo {
+  const skipped: string[] = [];
+  for (const name of ['PAM_ANTHROPIC_API_KEY', 'ANTHROPIC_API_KEY'] as const) {
+    const raw = process.env[name];
+    if (raw === undefined) continue;
+    const key = raw.trim();
+    if (!key) {
+      skipped.push(`${name}: present but empty`);
+      continue;
+    }
+    if (!key.startsWith('sk-ant-')) {
+      skipped.push(`${name}: does not look like an Anthropic key (starts "${key.slice(0, 4)}…") — skipped so it can't shadow a good one`);
+      continue;
+    }
+    return { key, source: name, prefix: key.slice(0, 7), length: key.length, looksAnthropic: true, skipped };
+  }
+  return { source: 'none', prefix: '', length: 0, looksAnthropic: false, skipped };
 }
 
 /** Production LLM client over the Anthropic SDK, with true delta streaming. */

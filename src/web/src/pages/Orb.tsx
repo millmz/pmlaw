@@ -44,6 +44,7 @@ export function OrbPage({ chatEnabled }: { chatEnabled: boolean }) {
   const [input, setInput] = useState('');
   const [muted, setMuted] = useState(() => localStorage.getItem('pam-muted') === '1');
   const [diag, setDiag] = useState<VoiceDiagnostics | null>(null);
+  const [brain, setBrain] = useState<{ source: string; prefix: string; length: number; looksAnthropic: boolean; skipped: string[] } | null>(null);
   const [showDiag, setShowDiag] = useState(false);
   const stateRef = useRef(state);
   stateRef.current = state;
@@ -160,8 +161,11 @@ export function OrbPage({ chatEnabled }: { chatEnabled: boolean }) {
 
   const toggleDiag = async () => {
     if (!showDiag) {
-      const me = await fetch('/api/settings').then((r) => (r.ok ? r.json() : { ttsConfigured: false })).catch(() => ({ ttsConfigured: false }));
-      setDiag(await getDiagnostics(Boolean((me as { ttsConfigured?: boolean }).ttsConfigured)));
+      const me = (await fetch('/api/settings')
+        .then((r) => (r.ok ? r.json() : {}))
+        .catch(() => ({}))) as { ttsConfigured?: boolean; brain?: typeof brain };
+      setDiag(await getDiagnostics(Boolean(me.ttsConfigured)));
+      setBrain(me.brain ?? null);
     }
     setShowDiag((v) => !v);
   };
@@ -236,6 +240,17 @@ export function OrbPage({ chatEnabled }: { chatEnabled: boolean }) {
           <div>audio context: {diag.audioContextState}</div>
           <div>voice path: {diag.ttsPath}</div>
           <div>last error: {diag.lastError ?? 'none'}</div>
+          {brain && (
+            <>
+              <div style={{ marginTop: 6 }}>
+                brain key: {brain.source === 'none' ? 'MISSING' : `${brain.source} (${brain.prefix}…, ${brain.length} chars)`}
+                {brain.source !== 'none' && !brain.looksAnthropic ? ' — DOES NOT LOOK LIKE AN ANTHROPIC KEY' : ''}
+              </div>
+              {brain.skipped.map((s, i) => (
+                <div key={i} style={{ color: 'var(--alert)' }}>skipped: {s}</div>
+              ))}
+            </>
+          )}
         </div>
       )}
     </div>
