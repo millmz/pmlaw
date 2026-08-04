@@ -140,47 +140,45 @@ input, select { font: inherit; }
 /* ─────────────────────────────────────────────────────────── the frame */
 .shell { display: flex; height: 100%; }
 .rail {
-  width: 236px; flex: none;
+  width: 84px; flex: none;
   background: linear-gradient(178deg, var(--frame-2), var(--frame) 55%);
   color: var(--frame-ink);
-  display: flex; flex-direction: column; padding: 26px 18px 18px; gap: 3px;
+  display: flex; flex-direction: column; align-items: stretch;
+  padding: 16px 8px 12px; gap: 2px;
   border-right: 1px solid color-mix(in srgb, var(--brass) 30%, transparent);
 }
-.rail-logo { display: flex; flex-direction: column; align-items: center; gap: 10px; padding: 0 0 8px; }
+.rail-logo { display: flex; justify-content: center; padding: 0 0 10px; }
 .bracket {
-  position: relative; font-family: var(--display); font-size: 27px;
-  letter-spacing: 0.16em; color: var(--brass-bright); padding: 10px 16px 8px 19px;
+  position: relative; font-family: var(--display); font-size: 15px;
+  letter-spacing: 0.12em; color: var(--brass-bright); padding: 7px 9px 6px 11px;
 }
 .bracket b { font-weight: 400; color: var(--frame-ink); }
 .bracket::before, .bracket::after {
-  content: ''; position: absolute; width: 12px; height: 12px;
+  content: ''; position: absolute; width: 8px; height: 8px;
   border: 0 solid var(--brass);
 }
 .bracket::before { top: 0; left: 0; border-top-width: 1.5px; border-left-width: 1.5px; }
 .bracket::after { bottom: 0; right: 0; border-bottom-width: 1.5px; border-right-width: 1.5px; }
-.rail-sub {
-  font-family: var(--display); font-size: 10.5px; letter-spacing: 0.34em;
-  text-transform: uppercase; color: var(--frame-ink-dim); text-align: center; line-height: 1.7;
-}
-.rail-rule { margin: 14px 6px 16px; }
-.rail-rule { height: 5px; border-top: 1px solid color-mix(in srgb, var(--brass) 45%, transparent); border-bottom: 1px solid color-mix(in srgb, var(--brass) 45%, transparent); }
+.rail-rule { margin: 6px 10px 10px; height: 5px; border-top: 1px solid color-mix(in srgb, var(--brass) 45%, transparent); border-bottom: 1px solid color-mix(in srgb, var(--brass) 45%, transparent); }
 .nav-link {
-  display: flex; align-items: center; gap: 13px; padding: 12px 14px;
-  border-radius: 3px; color: var(--frame-ink-dim); text-decoration: none;
-  font-family: var(--display); font-size: 15px; letter-spacing: 0.12em; text-transform: uppercase;
-  border-left: 2px solid transparent;
+  display: flex; flex-direction: column; align-items: center; gap: 3px;
+  padding: 9px 2px; border-radius: 4px;
+  color: var(--frame-ink-dim); text-decoration: none;
+  font-family: var(--sans); font-size: 8.5px; font-weight: 700;
+  letter-spacing: 0.12em; text-transform: uppercase;
+  border-left: 2px solid transparent; border-right: 2px solid transparent;
 }
 .nav-link:hover { color: var(--frame-ink); background: color-mix(in srgb, var(--brass) 8%, transparent); }
 .nav-link.active {
   color: var(--brass-bright);
   border-left-color: var(--brass);
-  background: linear-gradient(90deg, color-mix(in srgb, var(--brass) 14%, transparent), transparent 80%);
+  background: linear-gradient(180deg, color-mix(in srgb, var(--brass) 12%, transparent), transparent 85%);
 }
-.nav-link .icon { width: 19px; text-align: center; flex: none; opacity: 0.9; }
-.rail-more { margin-top: 16px; padding-top: 12px; border-top: 1px solid color-mix(in srgb, var(--frame-ink-dim) 25%, transparent); }
-.rail-more .nav-link { font-size: 12px; padding: 8px 14px; }
-.rail-foot { margin-top: auto; padding: 0 6px; }
-.rail-foot .rail-sub { letter-spacing: 0.18em; font-size: 9.5px; }
+.nav-link .icon { width: auto; font-size: 19px; line-height: 1; opacity: 0.95; }
+.rail-more { margin-top: 12px; padding-top: 8px; border-top: 1px solid color-mix(in srgb, var(--frame-ink-dim) 25%, transparent); }
+.rail-more .nav-link { font-size: 7.5px; padding: 7px 2px; }
+.rail-foot { margin-top: auto; text-align: center; }
+.rail-foot .rail-sub { font-family: var(--display); font-size: 9px; letter-spacing: 0.2em; text-transform: uppercase; color: var(--frame-ink-dim); }
 
 .main { flex: 1; min-width: 0; display: flex; flex-direction: column; overflow: hidden; background: var(--ground); }
 .page { flex: 1; overflow-y: auto; padding: 26px clamp(16px, 4vw, 44px) 100px; }
@@ -433,14 +431,7 @@ details.statute[open] > summary::before { transform: rotate(90deg); }
 .chat-fab:hover { background: var(--frame-2); }
 @media (max-width: 760px) { .chat-fab { display: none; } }
 
-.chat-dock { display: none; }
-@media (min-width: 1180px) {
-  .chat-dock {
-    display: flex; flex-direction: column; width: 440px; flex: none;
-    border-left: 1px solid color-mix(in srgb, var(--brass) 40%, var(--line)); background: var(--paper); min-height: 0;
-  }
-  .chat-fab, .chat-drawer { display: none; }
-}
+/* chat lives in the orb room and the summonable drawer — no permanent dock */
 
 /* ─────────────────────────────────────────────────────────────── login */
 .login-wrap { min-height: 100%; display: grid; place-items: center; padding: 24px; background: var(--frame); }

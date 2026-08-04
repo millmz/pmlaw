@@ -20,12 +20,14 @@ import { SettingsPage } from './pages/Settings.js';
 const qc = new QueryClient({ defaultOptions: { queries: { retry: 1, staleTime: 15_000 } } });
 
 /** Primary nav per Jeff's feedback (docs/10): quiet, four destinations. */
+/** Rail/tabbar destinations. On desktop the monogram is the PAM door, so the
+ *  rail filters the /pam item out; the mobile tab bar keeps it. */
 const NAV = [
   { to: '/', label: 'Today', icon: '☀' },
   { to: '/pam', label: 'PAM', icon: '◉' },
   { to: '/chat', label: 'Chat', icon: '✉' },
   { to: '/tasks', label: 'Tasks', icon: '☑' },
-  { to: '/settlements', label: 'Settlements', icon: '⚖' },
+  { to: '/settlements', label: 'Settle', icon: '⚖' },
 ];
 const MORE = [
   { to: '/matters', label: 'Matters', icon: '▤' },
@@ -99,13 +101,12 @@ function Shell() {
       <aside className="rail">
         <div className="rail-logo">
           {/* The monogram is the door to the orb room. */}
-          <NavLink to="/pam" className="bracket" style={{ textDecoration: 'none' }} title="Talk to PAM">
+          <NavLink to="/pam" className="bracket" style={{ textDecoration: 'none' }} aria-label="PAM" title="Talk to PAM">
             P<b>A</b>M
           </NavLink>
-          <span className="rail-sub">Phillips &amp; Millman<br />Attorneys at Law</span>
         </div>
         <div className="rail-rule" />
-        {NAV.map((n) => (
+        {NAV.filter((n) => n.to !== '/pam').map((n) => (
           <NavLink key={n.to} to={n.to} end={n.to === '/'} className={({ isActive }) => `nav-link${isActive ? ' active' : ''}`}>
             <span className="icon">{n.icon}</span>
             {n.label}
@@ -120,7 +121,7 @@ function Shell() {
           ))}
         </div>
         <div className="rail-foot">
-          <span className="rail-sub">{me?.user.name}<br />Mock data · Dev build</span>
+          <span className="rail-sub">{me?.user.initials}</span>
         </div>
       </aside>
 
@@ -155,11 +156,7 @@ function Shell() {
 
       {!onChatPage && (
         <>
-          {/* Wide screens: chat permanently docked beside the page. */}
-          <aside className="chat-dock" aria-label="PAM chat">
-            <ChatPanel chatEnabled={chatEnabled} />
-          </aside>
-          {/* Mid-size screens: floating button + drawer. */}
+          {/* Chat is summoned, never squatting: fab or "/" opens the drawer. */}
           <button className="chat-fab" onClick={() => setDrawerOpen(true)} aria-label="Open PAM chat" title="Ask PAM ( / )">
             P·M
           </button>

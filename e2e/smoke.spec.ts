@@ -104,7 +104,7 @@ test('mobile: four tabs + More, Tasks reachable', async ({ page }) => {
 
 test('Settlement board renders ranked cases with statuses, liens, and tap-to-call', async ({ page }) => {
   await login(page);
-  await page.getByRole('link', { name: 'Settlements' }).first().click();
+  await page.getByRole('link', { name: 'Settle' }).first().click();
   // Hughes first (most recent negotiation), with the trap case honestly labeled.
   await expect(page.getByText('Marcus Hughes')).toBeVisible();
   await expect(page.getByText('In negotiation').first()).toBeVisible();
