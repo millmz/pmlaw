@@ -3,7 +3,7 @@ import { createMockSmokeball } from '../smokeball/mock/server.js';
 import { SmokeballClient } from '../smokeball/client.js';
 import { openDb } from '../server/db/index.js';
 import { SyncWorker } from '../server/sync/worker.js';
-import { anthropicLlm, runAgentTurn } from '../server/agent/loop.js';
+import { anthropicLlm, pamApiKey, runAgentTurn } from '../server/agent/loop.js';
 import type { ToolContext } from '../server/tools/read-tools.js';
 import { EVAL_CASES } from './cases.js';
 
@@ -13,10 +13,10 @@ import { EVAL_CASES } from './cases.js';
  * once wired into CI with a key.
  */
 async function main() {
-  if (!process.env['ANTHROPIC_API_KEY']) {
-    console.log(`No ANTHROPIC_API_KEY — listing ${EVAL_CASES.length} eval cases without scoring:\n`);
+  if (!pamApiKey()) {
+    console.log(`No API key — listing ${EVAL_CASES.length} eval cases without scoring:\n`);
     for (const c of EVAL_CASES) console.log(`  ${c.id.padEnd(28)} "${c.prompt}"`);
-    console.log('\nSet ANTHROPIC_API_KEY to run scored evals.');
+    console.log('\nSet PAM_ANTHROPIC_API_KEY (or ANTHROPIC_API_KEY) to run scored evals.');
     return;
   }
 

@@ -141,10 +141,17 @@ export async function runAgentTurn(
   };
 }
 
+/** The API key for PAM's own Anthropic calls. PAM_ANTHROPIC_API_KEY takes
+ *  precedence because managed environments (e.g. Claude Code cloud sessions)
+ *  reserve/strip the plain ANTHROPIC_API_KEY name. */
+export function pamApiKey(): string | undefined {
+  return process.env['PAM_ANTHROPIC_API_KEY'] ?? process.env['ANTHROPIC_API_KEY'];
+}
+
 /** Production LLM client over the Anthropic SDK, with true delta streaming. */
 export async function anthropicLlm(model = 'claude-sonnet-5'): Promise<LlmClient> {
   const { default: Anthropic } = await import('@anthropic-ai/sdk');
-  const client = new Anthropic(); // reads ANTHROPIC_API_KEY
+  const client = new Anthropic({ apiKey: pamApiKey() ?? null });
   return {
     async create(params, hooks) {
       const stream = client.messages.stream({

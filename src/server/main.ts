@@ -3,7 +3,7 @@ import { createMockSmokeball } from '../smokeball/mock/server.js';
 import { SmokeballClient } from '../smokeball/client.js';
 import { openDb } from './db/index.js';
 import { SyncWorker } from './sync/worker.js';
-import { anthropicLlm, type LlmClient } from './agent/loop.js';
+import { anthropicLlm, pamApiKey, type LlmClient } from './agent/loop.js';
 import type { ToolContext } from './tools/types.js';
 import { buildApp } from './app.js';
 
@@ -52,7 +52,7 @@ async function main() {
   };
 
   let llm: LlmClient | undefined;
-  if (process.env['ANTHROPIC_API_KEY']) llm = await anthropicLlm();
+  if (pamApiKey()) llm = await anthropicLlm();
 
   const app = buildApp({ ctx, worker, llm, accessCode: process.env['PAM_ACCESS_CODE'] });
   const addr = await app.listen({ port: PORT, host: '0.0.0.0' });
