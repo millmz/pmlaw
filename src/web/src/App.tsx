@@ -14,12 +14,15 @@ import { TodayPage } from './pages/Today.js';
 import { TasksPage } from './pages/Tasks.js';
 import { MatterDetailPage, MattersPage } from './pages/Matters.js';
 import { ActivityPage, ChatPage, LoginPage, SettlementsPage } from './pages/misc.js';
+import { OrbPage } from './pages/Orb.js';
+import { SettingsPage } from './pages/Settings.js';
 
 const qc = new QueryClient({ defaultOptions: { queries: { retry: 1, staleTime: 15_000 } } });
 
 /** Primary nav per Jeff's feedback (docs/10): quiet, four destinations. */
 const NAV = [
   { to: '/', label: 'Today', icon: '☀' },
+  { to: '/pam', label: 'PAM', icon: '◉' },
   { to: '/chat', label: 'Chat', icon: '✉' },
   { to: '/tasks', label: 'Tasks', icon: '☑' },
   { to: '/settlements', label: 'Settlements', icon: '⚖' },
@@ -27,6 +30,7 @@ const NAV = [
 const MORE = [
   { to: '/matters', label: 'Matters', icon: '▤' },
   { to: '/activity', label: 'Activity', icon: '≡' },
+  { to: '/settings', label: 'Settings', icon: '⚙' },
 ];
 
 const TITLES: Record<string, string> = {
@@ -44,11 +48,20 @@ export function App() {
       <BrowserRouter>
         <Routes>
           <Route path="/login" element={<LoginPage />} />
+          <Route path="/pam" element={<OrbGate />} />
           <Route path="/*" element={<Shell />} />
         </Routes>
       </BrowserRouter>
     </QueryClientProvider>
   );
+}
+
+/** The orb room is a full-page takeover outside the Shell chrome. */
+function OrbGate() {
+  const { data: me, isLoading } = useQuery({ queryKey: ['me'], queryFn: api.me });
+  if (isLoading) return null;
+  if (me && me.gated && !me.authed) return <Navigate to="/login" replace />;
+  return <OrbPage chatEnabled={me?.chatEnabled ?? false} />;
 }
 
 function Shell() {
@@ -85,7 +98,10 @@ function Shell() {
     <div className="shell">
       <aside className="rail">
         <div className="rail-logo">
-          <span className="bracket">P<b>A</b>M</span>
+          {/* The monogram is the door to the orb room. */}
+          <NavLink to="/pam" className="bracket" style={{ textDecoration: 'none' }} title="Talk to PAM">
+            P<b>A</b>M
+          </NavLink>
           <span className="rail-sub">Phillips &amp; Millman<br />Attorneys at Law</span>
         </div>
         <div className="rail-rule" />
@@ -131,6 +147,7 @@ function Shell() {
             <Route path="/matters" element={<MattersPage />} />
             <Route path="/matters/:id" element={<MatterDetailPage />} />
             <Route path="/activity" element={<ActivityPage />} />
+            <Route path="/settings" element={<SettingsPage />} />
             <Route path="*" element={<Navigate to="/" replace />} />
           </Routes>
         </div>

@@ -467,3 +467,64 @@ table.data th {
   white-space: nowrap;
 }
 table.data td { padding: 10px 12px; border-bottom: 1px solid var(--line-soft); vertical-align: top; }
+
+/* ─────────────────────────────────────────────────────────── the orb room */
+.orb-room {
+  position: fixed; inset: 0; z-index: 60;
+  background: radial-gradient(ellipse 80% 60% at 50% 38%, var(--frame-2), var(--frame) 70%);
+  color: var(--frame-ink);
+  display: flex; flex-direction: column; align-items: center;
+  padding: 18px clamp(14px, 4vw, 40px) calc(18px + env(safe-area-inset-bottom));
+  font-family: var(--sans);
+}
+.orb-back, .orb-mute, .orb-cmd {
+  font-family: var(--sans); font-size: 12.5px; letter-spacing: 0.06em;
+  color: var(--frame-ink-dim); background: none; border: 0; text-decoration: none;
+  cursor: pointer; padding: 6px 4px; text-transform: lowercase;
+}
+.orb-back:hover, .orb-mute:hover, .orb-cmd:hover { color: var(--brass-bright); }
+.orb-back { position: absolute; top: 14px; left: 18px; }
+.orb-mute { position: absolute; top: 14px; right: 18px; }
+.orb-stage { flex: 1; min-height: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; width: 100%; }
+.orb-canvas {
+  width: min(64vmin, 460px); height: min(64vmin, 460px);
+  cursor: pointer; touch-action: manipulation;
+}
+.orb-status {
+  font-family: var(--display); font-size: 12px; letter-spacing: 0.34em;
+  text-transform: uppercase; color: var(--frame-ink-dim);
+  display: flex; align-items: center; gap: 10px; margin-top: 6px;
+}
+.orb-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--frame-ink-dim); }
+.orb-dot.s-listening { background: var(--brass-bright); box-shadow: 0 0 10px var(--brass-bright); }
+.orb-dot.s-thinking { background: var(--brass); animation: orbpulse 0.9s infinite; }
+.orb-dot.s-speaking { background: #d9c08a; box-shadow: 0 0 12px #d9c08a; }
+@keyframes orbpulse { 50% { opacity: 0.35; } }
+.orb-console {
+  width: min(720px, 100%); max-height: 30vh; overflow-y: auto;
+  font-size: 15px; line-height: 1.6; display: flex; flex-direction: column; gap: 6px;
+  mask-image: linear-gradient(to bottom, transparent, black 18%);
+}
+.orb-line { color: var(--frame-ink); }
+.orb-line .who { color: var(--brass); font-weight: 700; margin-right: 6px; }
+.orb-line.you { color: var(--frame-ink-dim); }
+.orb-line.pam { font-family: var(--serif); font-size: 16.5px; }
+.orb-line.sys { color: var(--alert); }
+.caret { animation: orbpulse 1s infinite; color: var(--brass-bright); }
+.orb-input {
+  width: min(720px, 100%); display: flex; align-items: center; gap: 10px;
+  border-top: 1px solid color-mix(in srgb, var(--brass) 35%, transparent);
+  padding-top: 12px; margin-top: 10px;
+}
+.orb-input .who { color: var(--brass-bright); font-weight: 700; }
+.orb-input input {
+  flex: 1; background: none; border: 0; outline: none; color: var(--frame-ink);
+  font: 16.5px var(--sans);
+}
+.orb-input input::placeholder { color: var(--frame-ink-dim); }
+.orb-diag {
+  position: absolute; bottom: 76px; right: 18px;
+  background: color-mix(in srgb, var(--frame) 88%, black); border: 1px solid var(--brass);
+  padding: 12px 16px; font-size: 12.5px; line-height: 1.8; color: var(--frame-ink);
+  font-family: var(--sans);
+}

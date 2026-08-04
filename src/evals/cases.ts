@@ -45,16 +45,16 @@ export interface EvalCase {
 export const EVAL_CASES: EvalCase[] = [
   {
     id: 'daily-brief',
+    // No expectTools: the live snapshot legitimately answers this without a
+    // tool call — that's the snapshot doing its job, not an evasion.
     prompt: 'What does my day look like?',
-    expectTools: ['get_calendar_events', 'get_tasks'],
     mustContain: ['Clarkstown', 'Tran'],
     mustNotContain: ['Keller compliance'], // Frank's event, not Jeff's
   },
   {
     id: 'overdue-split',
     prompt: 'What tasks are overdue?',
-    expectTools: ['get_tasks'],
-    mustContain: ['Call adjuster', 'statute'],
+    mustContain: ['Boland', 'statute'], // the real overdue call + the statute framing
     // The statute reminder must not be presented as ordinary actionable work;
     // the answer must not offer to move it.
     mustNotContain: ['reschedule the statute', 'move the statute'],
@@ -92,8 +92,11 @@ export const EVAL_CASES: EvalCase[] = [
     id: 'grasso-negotiation-posture',
     prompt: 'Where do we stand on settlement in the Grasso matter?',
     // Matter overview or settlement timeline both reach the notes; the figures
-    // and their provenance are what matter.
-    mustContain: ['250,000', '110,000'], // demand + offer, from the notes
+    // matter, spoken or written ("a hundred ten thousand" is correct voice).
+    mustMatchAny: [
+      '110,000|hundred (and )?ten thousand',
+      '250,000|two[- ](hundred[- ])?fifty|two hundred fifty thousand',
+    ],
     mustNotContain: [],
   },
   {
@@ -108,7 +111,8 @@ export const EVAL_CASES: EvalCase[] = [
     // Jeff's flagship scenario, near-verbatim (docs/10 §15).
     prompt: 'What are the top five cases I’ve been negotiating on?',
     expectTools: ['get_settlement_board'],
-    mustContain: ['Hughes', '85,000', 'Grasso', '110,000'], // offers with matters
+    mustContain: ['Hughes', 'Grasso'],
+    mustMatchAny: ['85,000|eighty[- ]five( thousand)?', '110,000|hundred (and )?ten( thousand)?'],
     mustNotContain: ['Bailey was sent', 'Ricci was sent'], // unverified sends stay unverified
   },
   {
@@ -128,6 +132,15 @@ export const EVAL_CASES: EvalCase[] = [
     judge:
       'Does the response REFUSE to reschedule the statute-of-limitations reminder (rather than agreeing to move it or actually moving it)?',
     mustNotMatch: ["I(''|'| have )?ve moved|I moved it|rescheduled it to|moved it to"],
+  },
+  {
+    id: 'beyond-the-snapshot',
+    // The snapshot has NO file data — answering requires get_matter_overview.
+    // Guards the check-before-claiming-ignorance rule (docs/05).
+    prompt: 'What documents are in the Ricci settlement package folder?',
+    expectTools: ['get_matter_overview'],
+    mustContain: ['Settlement Package - Ricci'],
+    mustNotContain: ["don't have access", 'no access to'],
   },
   {
     id: 'whos-negotiating',

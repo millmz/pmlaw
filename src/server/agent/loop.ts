@@ -3,7 +3,9 @@ import { ALL_TOOLS, runTool, validateCitations } from '../tools/registry.js';
 import type { ToolContext } from '../tools/types.js';
 import type { Citation } from '../tools/citations.js';
 import { appNow } from '../../core/dates.js';
-import { buildSystemPrompt } from './system-prompt.js';
+import { getIdentity, getKnowledge } from '../identity.js';
+import { buildDynamicBlock, buildStableBlock, type SystemBlock } from './system-prompt.js';
+import { buildSnapshot } from './snapshot.js';
 
 /**
  * The agent loop (docs/01): Claude calls tools from the closed registry until
@@ -48,13 +50,17 @@ export interface LlmHooks {
 export interface LlmClient {
   create(
     params: {
-      system: string;
+      /** Two blocks: [0] stable+cacheable, [1] dynamic (docs/05 architecture). */
+      system: SystemBlock[];
       messages: LlmMessage[];
       tools: { name: string; description: string; input_schema: unknown }[];
     },
     hooks?: LlmHooks,
   ): Promise<LlmResponse>;
 }
+
+/** Test helper type: what a fake LLM captures about the system blocks. */
+export type SystemBlockCapture = { cache: boolean; length: number; text: string }[];
 
 export interface AgentTurnResult {
   text: string;
@@ -88,7 +94,21 @@ export async function runAgentTurn(
 ): Promise<AgentTurnResult> {
   const messages: LlmMessage[] = [...history, { role: 'user', content: userMessage }];
   const tools = toolDefinitions();
-  const system = buildSystemPrompt(appNow(ctx.fixedNowIso));
+  const [identity, knowledge, snapshot] = [
+    await getIdentity(ctx.db),
+    await getKnowledge(ctx.db),
+    await buildSnapshot(ctx),
+  ];
+  const system: SystemBlock[] = [
+    { text: buildStableBlock(identity, knowledge), cache: true },
+    {
+      text: buildDynamicBlock({
+        now: appNow(ctx.fixedNowIso),
+        snapshot,
+        longConversation: history.length >= 28, // ~14 turns → drift checkpoint
+      }),
+    },
+  ];
   const citations: Citation[] = [];
   const toolCalls: { name: string; params: unknown }[] = [];
 
@@ -159,7 +179,12 @@ export async function anthropicLlm(model = 'claude-sonnet-5'): Promise<LlmClient
       const stream = client.messages.stream({
         model,
         max_tokens: 4000,
-        system: [{ type: 'text', text: params.system, cache_control: { type: 'ephemeral' } }],
+        // Block 1 carries cache_control; block 2 (date/snapshot) never does.
+        system: params.system.map((b) =>
+          b.cache
+            ? { type: 'text' as const, text: b.text, cache_control: { type: 'ephemeral' as const } }
+            : { type: 'text' as const, text: b.text },
+        ),
         messages: params.messages as never,
         tools: params.tools as never,
       });

@@ -34,7 +34,9 @@ async function main() {
     rps: useReal ? 4 : 50,
   });
 
-  const { db, close: closeDb } = await openDb();
+  // PAM_DATA_DIR (a persistent disk in production) makes sessions, memories,
+  // and Jeff's identity edits survive restarts; unset = in-memory (dev/tests).
+  const { db, close: closeDb } = await openDb(process.env['PAM_DATA_DIR']);
   const worker = new SyncWorker(db, client);
   console.log('[pam] full sync…');
   console.log('[pam] synced:', await worker.fullSync());

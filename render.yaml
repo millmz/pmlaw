@@ -6,8 +6,12 @@ services:
   - type: web
     name: pam
     runtime: node
-    plan: free
+    plan: starter
     branch: claude/dads-platform-build-plan-lcppom
+    disk:
+      name: pam-data
+      mountPath: /var/data
+      sizeGB: 1
     # npm-installed pnpm avoids corepack's signature-verification breakage
     # (old corepack builds reject current pnpm releases after npm's key rotation).
     # --prod=false forces devDependencies (vite, react) even if NODE_ENV=production,
@@ -20,5 +24,9 @@ services:
         value: '22.16.0'
       - key: ANTHROPIC_API_KEY
         sync: false
+      - key: ELEVENLABS_API_KEY
+        sync: false
+      - key: PAM_DATA_DIR
+        value: /var/data/pam-db
       - key: PAM_ACCESS_CODE
         generateValue: true

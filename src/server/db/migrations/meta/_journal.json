@@ -15,6 +15,13 @@
       "when": 1785793084781,
       "tag": "0001_luxuriant_madame_web",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1785879246070,
+      "tag": "0002_military_the_professor",
+      "breakpoints": true
     }
   ]
 }

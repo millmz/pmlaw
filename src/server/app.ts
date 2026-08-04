@@ -179,6 +179,68 @@ export function buildApp(deps: AppDeps): FastifyInstance {
     return result.data;
   });
 
+  // -------------------------------------------------- identity & settings
+  const EDITABLE_SETTINGS = new Set(['identity.md', 'knowledge.md', 'elevenlabs_voice_id']);
+
+  app.get('/api/settings', async () => {
+    const { getIdentity, getKnowledge } = await import('./identity.js');
+    const { eq } = await import('drizzle-orm');
+    const voiceRow = await ctx.db
+      .select()
+      .from(schema.appSettings)
+      .where(eq(schema.appSettings.key, 'elevenlabs_voice_id'))
+      .limit(1);
+    return {
+      'identity.md': await getIdentity(ctx.db),
+      'knowledge.md': await getKnowledge(ctx.db),
+      elevenlabs_voice_id: voiceRow[0]?.value ?? '',
+      ttsConfigured: Boolean(process.env['ELEVENLABS_API_KEY']),
+    };
+  });
+
+  app.put<{ Params: { key: string } }>('/api/settings/:key', async (req, reply) => {
+    const key = req.params.key;
+    if (!EDITABLE_SETTINGS.has(key)) return reply.code(400).send({ error: `"${key}" is not editable.` });
+    const { value } = (req.body ?? {}) as { value?: string };
+    if (typeof value !== 'string') return reply.code(400).send({ error: 'value (string) required' });
+    const { putSetting } = await import('./identity.js');
+    await putSetting(ctx.db, key, value);
+    await ctx.db.insert(schema.auditLog).values({
+      actor: ctx.currentStaffId,
+      action: `settings:edit:${key}`,
+      params: { bytes: value.length },
+      result: 'saved',
+    });
+    return { ok: true };
+  });
+
+  // ------------------------------------------------------------------ tts
+  // ElevenLabs relay: the key stays server-side, restricted to synthesis.
+  app.post('/api/tts', async (req, reply) => {
+    const apiKey = process.env['ELEVENLABS_API_KEY'];
+    if (!apiKey) return reply.code(501).send({ error: 'no_tts_key' });
+    const { text } = (req.body ?? {}) as { text?: string };
+    if (!text?.trim()) return reply.code(400).send({ error: 'empty text' });
+    const { eq } = await import('drizzle-orm');
+    const voiceRow = await ctx.db
+      .select()
+      .from(schema.appSettings)
+      .where(eq(schema.appSettings.key, 'elevenlabs_voice_id'))
+      .limit(1);
+    const voiceId = voiceRow[0]?.value || '21m00Tcm4TlvDq8ikWAM'; // "Rachel" default
+    const res = await fetch(`https://api.elevenlabs.io/v1/text-to-speech/${voiceId}?output_format=mp3_44100_64`, {
+      method: 'POST',
+      headers: { 'xi-api-key': apiKey, 'content-type': 'application/json' },
+      body: JSON.stringify({ text: text.slice(0, 2500), model_id: 'eleven_turbo_v2_5' }),
+    });
+    if (!res.ok) {
+      const detail = res.status === 401 ? 'bad_key' : res.status === 429 ? 'out_of_credits' : `elevenlabs_${res.status}`;
+      return reply.code(502).send({ error: detail });
+    }
+    const buf = Buffer.from(await res.arrayBuffer());
+    return reply.type('audio/mpeg').send(buf);
+  });
+
   app.get('/api/settlements', async () => {
     const result = await runTool(ctx, 'get_settlement_board', {});
     return result.data;
@@ -254,12 +316,15 @@ export function buildApp(deps: AppDeps): FastifyInstance {
         session = { id, history: [] };
       }
 
-      const turn = await runAgentTurn(ctx, deps.llm, session.history, message, {
+      // Bounded context window: full history stays in the DB; the model sees
+      // the most recent slice (block-2 snapshot carries current state anyway).
+      const window = session.history.slice(-40);
+      const turn = await runAgentTurn(ctx, deps.llm, window, message, {
         onText: (delta) => send({ type: 'text_delta', text: delta }),
         onTool: (name) => send({ type: 'tool', name }),
       });
 
-      const newLlmMessages = turn.messages.slice(session.history.length);
+      const newLlmMessages = turn.messages.slice(window.length);
       await ctx.db.insert(schema.chatMessages).values([
         { sessionId: session.id, role: 'user', displayText: message, llmJson: null, citations: null },
         {

@@ -139,6 +139,27 @@ export const chatMessages = pgTable('chat_messages', {
   at: timestamp('at', { withTimezone: true }).notNull().defaultNow(),
 });
 
+/** Editable app settings — identity.md / knowledge.md equivalents live here
+ *  (the DB is the persistent disk; files on Render's ephemeral FS would lose
+ *  Jeff's edits on every deploy). */
+export const appSettings = pgTable('app_settings', {
+  key: text('key').primaryKey(),
+  value: text('value').notNull(),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+});
+
+/** Long-term memory. HARD RULE (privilege): working preferences and firm
+ *  process only — never client confidences, case facts, or client identities. */
+export const memories = pgTable('memories', {
+  id: text('id').primaryKey(),
+  type: text('type').notNull(), // FACT | PREFERENCE | PROJECT | POINTER
+  hook: text('hook').notNull(), // one-line searchable summary
+  body: text('body').notNull(),
+  taughtBy: text('taught_by').notNull(),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+});
+
 /** Audit log for every tool invocation and (later) every write (docs/03). */
 export const auditLog = pgTable('audit_log', {
   id: integer('id').primaryKey().generatedAlwaysAsIdentity(),

@@ -114,6 +114,37 @@ test('Settlement board renders ranked cases with statuses, liens, and tap-to-cal
   await page.screenshot({ path: 'e2e/screenshots/08-settlements.png', fullPage: true });
 });
 
+test('the orb room: full-page takeover, reactor canvas, honest diagnostics', async ({ page }) => {
+  await login(page);
+  await page.getByRole('link', { name: 'PAM', exact: true }).click();
+  await expect(page).toHaveURL(/\/pam/);
+  await expect(page.locator('.orb-canvas')).toBeVisible();
+  await expect(page.locator('.rail')).toHaveCount(0); // takeover: no app chrome
+  // With no API key, the status line says so instead of pretending.
+  await expect(page.locator('.orb-status')).toContainText('API KEY');
+  // Voice unavailability surfaces real reasons, not silence:
+  await page.getByRole('button', { name: '[ system check ]' }).click();
+  await expect(page.locator('.orb-diag')).toContainText('voice path: browser'); // no ElevenLabs key in E2E
+  await expect(page.locator('.orb-diag')).toContainText('recognition:');
+  await expect(page.locator('.orb-diag')).toContainText('microphone:');
+  await page.screenshot({ path: 'e2e/screenshots/13-orb.png' });
+  await page.getByText('[ ← back ]').click();
+  await expect(page.getByRole('heading', { name: 'Today', exact: true })).toBeVisible();
+});
+
+test('settings: Jeff can edit who PAM is, and it round-trips', async ({ page }) => {
+  await login(page);
+  await page.goto('/settings');
+  const identity = page.getByLabel('Who PAM is');
+  await expect(identity).toHaveValue(/You are PAM/);
+  await identity.fill('You are PAM. E2E_EDIT_SENTINEL.');
+  await page.getByRole('button', { name: 'Save' }).first().click();
+  await expect(page.locator('.pill.ok').first()).toBeVisible();
+  await page.reload();
+  await expect(page.getByLabel('Who PAM is')).toHaveValue(/E2E_EDIT_SENTINEL/);
+  await page.screenshot({ path: 'e2e/screenshots/14-settings.png', fullPage: true });
+});
+
 test('chat is honest when no API key is configured', async ({ page }) => {
   await login(page);
   await page.locator('.tabbar, .rail').first();
