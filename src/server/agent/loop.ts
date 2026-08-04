@@ -2,7 +2,8 @@ import { zodToJsonSchema } from 'zod-to-json-schema';
 import { ALL_TOOLS, runTool, validateCitations } from '../tools/registry.js';
 import type { ToolContext } from '../tools/types.js';
 import type { Citation } from '../tools/citations.js';
-import { SYSTEM_PROMPT } from './system-prompt.js';
+import { appNow } from '../../core/dates.js';
+import { buildSystemPrompt } from './system-prompt.js';
 
 /**
  * The agent loop (docs/01): Claude calls tools from the closed registry until
@@ -87,12 +88,13 @@ export async function runAgentTurn(
 ): Promise<AgentTurnResult> {
   const messages: LlmMessage[] = [...history, { role: 'user', content: userMessage }];
   const tools = toolDefinitions();
+  const system = buildSystemPrompt(appNow(ctx.fixedNowIso));
   const citations: Citation[] = [];
   const toolCalls: { name: string; params: unknown }[] = [];
 
   for (let step = 0; step < MAX_STEPS; step++) {
     const res = await llm.create(
-      { system: SYSTEM_PROMPT, messages, tools },
+      { system, messages, tools },
       hooks.onText ? { onText: hooks.onText } : {},
     );
     const toolUses = res.content.filter((b): b is LlmToolUseBlock => b.type === 'tool_use');

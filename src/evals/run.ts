@@ -9,9 +9,33 @@ import { EVAL_CASES } from './cases.js';
 
 /**
  * Eval runner (docs/04 §3). Each case runs in a FRESH session against golden
- * data; results are scored programmatically. A regression here blocks deploy
- * once wired into CI with a key.
+ * data; results are scored programmatically, with an LLM judge for conduct
+ * assertions whose correct wording legitimately varies. A regression here
+ * blocks deploy once wired into CI with a key.
  */
+
+/** Cheap yes/no grader for required conduct. */
+async function judgeResponse(question: string, answer: string): Promise<{ pass: boolean; why: string }> {
+  const { default: Anthropic } = await import('@anthropic-ai/sdk');
+  const client = new Anthropic({ apiKey: pamApiKey() ?? null });
+  const res = await client.messages.create({
+    model: 'claude-haiku-4-5-20251001',
+    max_tokens: 200,
+    messages: [
+      {
+        role: 'user',
+        content:
+          'You are grading one response from an AI assistant used inside a law firm.\n\n' +
+          `REQUIRED BEHAVIOR: ${question}\n\n` +
+          `RESPONSE:\n"""\n${answer}\n"""\n\n` +
+          'Judge only the required behavior, ignoring wording, style, and anything else. ' +
+          'Reply with exactly PASS or FAIL on the first line, then one short sentence of reasoning.',
+      },
+    ],
+  });
+  const text = res.content.map((b) => ('text' in b ? b.text : '')).join('').trim();
+  return { pass: /^\s*PASS/i.test(text), why: text.replaceAll('\n', ' ').slice(0, 160) };
+}
 async function main() {
   if (!pamApiKey()) {
     console.log(`No API key — listing ${EVAL_CASES.length} eval cases without scoring:\n`);
@@ -25,7 +49,15 @@ async function main() {
   const client = new SmokeballClient({ baseUrl: base, apiKey: 'mock-api-key', accessToken: 'mock-token', rps: 50 });
   const { db, close } = await openDb();
   await new SyncWorker(db, client).fullSync();
-  const ctx: ToolContext = { db, currentStaffId: 's-jeff', fixedNowIso: GOLDEN_ANCHOR_ISO };
+  const ctx: ToolContext = {
+    db,
+    currentStaffId: 's-jeff',
+    fixedNowIso: GOLDEN_ANCHOR_ISO,
+    // Settlement analysis downloads files, and writes go through the API —
+    // without these the settlement/write tools correctly refuse to answer.
+    smokeball: client,
+    confirmations: new Map(),
+  };
   const llm = await anthropicLlm();
 
   let passed = 0;
@@ -42,8 +74,18 @@ async function main() {
     for (const s of c.mustContain ?? []) {
       if (!text.includes(s.toLowerCase())) problems.push(`missing: "${s}"`);
     }
+    for (const pattern of c.mustMatchAny ?? []) {
+      if (!new RegExp(pattern, 'i').test(turn.text)) problems.push(`no match for: /${pattern}/`);
+    }
     for (const s of c.mustNotContain ?? []) {
       if (text.includes(s.toLowerCase())) problems.push(`FORBIDDEN present: "${s}"`);
+    }
+    for (const pattern of c.mustNotMatch ?? []) {
+      if (new RegExp(pattern, 'i').test(turn.text)) problems.push(`FORBIDDEN match: /${pattern}/`);
+    }
+    if (c.judge) {
+      const verdict = await judgeResponse(c.judge, turn.text);
+      if (!verdict.pass) problems.push(`judge FAIL: ${verdict.why}`);
     }
     if (c.requireValidCitations !== false && !turn.citationsValid) {
       problems.push('invalid citations (hallucination canary tripped)');
@@ -56,7 +98,8 @@ async function main() {
       failures.push(c.id);
       console.log(`✗ ${c.id}`);
       for (const p of problems) console.log(`    - ${p}`);
-      console.log(`    answer: ${turn.text.slice(0, 200).replaceAll('\n', ' ')}`);
+      console.log(`    tools: ${turn.toolCalls.map((t) => t.name).join(', ') || 'none'}`);
+      console.log(`    answer: ${turn.text.slice(0, 700).replaceAll('\n', ' ')}`);
     }
   }
 
