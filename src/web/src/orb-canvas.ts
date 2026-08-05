@@ -41,10 +41,22 @@ interface Mote {
   twinkle: number; // phase for slow brightness cycle
 }
 
+/** A celebration spark — Miami orange or Hurricane green, thrown from the limb. */
+interface Spark {
+  angle: number;
+  speed: number; // radius multiples per second
+  born: number;
+  size: number;
+  curl: number; // tangential drift
+  hue: 'orange' | 'green' | 'cream';
+}
+
 export class OrbRenderer {
   private plasma: Plasma[] = [];
   private motes: Mote[] = [];
   private ripples: { born: number }[] = [];
+  private sparks: Spark[] = [];
+  private celebrateAt = 0;
   private lastRipple = 0;
   private raf = 0;
   private state: OrbState = 'idle';
@@ -89,6 +101,29 @@ export class OrbRenderer {
 
   setState(s: OrbState) {
     this.state = s;
+  }
+
+  /** Go Canes: a brief orange-and-green burst from the limb. Reduced motion
+   *  gets a quiet two-color glow pulse instead of sparks. */
+  celebrate() {
+    this.celebrateAt = performance.now();
+    if (this.reduced) return;
+    // Two waves: a bright burst now, a trailing one a beat later.
+    for (const [delay, count] of [
+      [0, 90],
+      [260, 50],
+    ] as const) {
+      for (let i = 0; i < count; i++) {
+        this.sparks.push({
+          angle: (i / count) * TAU + Math.random() * 0.5,
+          speed: 0.35 + Math.random() * 0.75,
+          born: this.celebrateAt + delay,
+          size: 1.6 + Math.random() * 2.6,
+          curl: (Math.random() - 0.5) * 1.1,
+          hue: i % 3 === 0 ? 'green' : i % 3 === 1 ? 'orange' : 'cream',
+        });
+      }
+    }
   }
 
   start() {
@@ -288,6 +323,46 @@ export class OrbRenderer {
     g.arc(cx, cy, R * 0.975, Math.PI / 2 - 0.7, Math.PI / 2 + 0.7);
     g.stroke();
     g.restore();
+
+    // ---- celebration: Go-Canes. Two rings — orange chasing green — and a
+    // burst of sparks from the limb, all fading before the canvas edge.
+    const celAge = (nowMs - this.celebrateAt) / 1000;
+    if (this.celebrateAt && celAge < 1.6) {
+      const pa = 1 - celAge / 1.6;
+      const pulse = [
+        ['244, 115, 33', 0],
+        ['38, 132, 88', 0.12],
+      ] as const;
+      for (const [color, off] of pulse) {
+        const rr = R * (1.04 + off) + (glowR - R * 1.16) * celAge * (this.reduced ? 0.2 : 0.55);
+        if (rr < glowR) {
+          g.beginPath();
+          g.arc(cx, cy, rr, 0, TAU);
+          g.strokeStyle = `rgba(${color}, ${0.52 * pa * pa})`;
+          g.lineWidth = 2.5;
+          g.stroke();
+        }
+      }
+    }
+    this.sparks = this.sparks.filter((s) => nowMs - s.born < 2200);
+    for (const s of this.sparks) {
+      if (nowMs < s.born) continue; // second wave still queued
+      const age = (nowMs - s.born) / 2200;
+      const r = R * (1.02 + s.speed * age * 2.2);
+      const edgeFade = Math.max(0, 1 - (r - R) / Math.max(1, glowR - R));
+      if (edgeFade <= 0) continue;
+      const a = s.angle + s.curl * age;
+      const alpha = (1 - age) * (1 - age) * 0.9 * edgeFade;
+      g.beginPath();
+      g.arc(cx + Math.cos(a) * r, cy + Math.sin(a) * r, s.size * (1 - age * 0.5), 0, TAU);
+      g.fillStyle =
+        s.hue === 'orange'
+          ? `rgba(244, 115, 33, ${alpha})`
+          : s.hue === 'green'
+            ? `rgba(64, 168, 112, ${alpha})`
+            : `rgba(255, 240, 214, ${alpha})`;
+      g.fill();
+    }
 
     // ---- motes in front of the sphere
     this.drawMotes(g, cx, cy, R, it, bright, lvl, 'front');

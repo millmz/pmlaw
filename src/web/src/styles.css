@@ -113,6 +113,32 @@
   }
 }
 
+/* ── Hurricane mode: game-day accents in Miami orange and Hurricane green.
+   Paper, ink, and the dark frame stay the firm's — only the accents change
+   hands: the metal goes burnt orange, the deep fills go green. */
+body[data-canes='1'] {
+  --brass: #b65e1f;
+  --brass-bright: #db7b2e;
+  --brass-pale: #f2ddc4;
+  --oxblood: #0f4d33;
+  --oxblood-soft: #1f6a48;
+  --oxblood-wash: #e4eddf;
+  --oxblood-solid: #0f4d33;
+  --link: #0d5c3a;
+}
+@media (prefers-color-scheme: dark) {
+  body[data-canes='1'] {
+    --brass: #d9822f;
+    --brass-bright: #f9964f;
+    --brass-pale: #4a2e18;
+    --oxblood: #5aa87c;
+    --oxblood-soft: #74bd92;
+    --oxblood-wash: #142a1d;
+    --oxblood-solid: #0e3d28;
+    --link: #f9964f;
+  }
+}
+
 * { box-sizing: border-box; }
 html, body, #root { height: 100%; }
 body {
@@ -470,6 +496,9 @@ details.statute[open] > summary::before { transform: rotate(90deg); }
 .login-card h1 .amp { color: var(--oxblood); }
 .login-card p { color: var(--ink-2); font-size: 15.5px; font-family: var(--serif); }
 .login-err { color: var(--alert); font-size: 14.5px; margin-top: 12px; }
+.canes-toggle { display: flex; gap: 12px; align-items: flex-start; cursor: pointer; }
+.canes-toggle input { width: 20px; height: 20px; margin-top: 2px; accent-color: #f47321; cursor: pointer; }
+.canes-toggle b { font-family: var(--serif); font-weight: 700; font-size: 17px; }
 /* The alma-mater bar — a quiet Hurricanes salute in Miami's orange and green. */
 .alma-mater {
   display: flex; align-items: center; gap: 10px; justify-content: center;

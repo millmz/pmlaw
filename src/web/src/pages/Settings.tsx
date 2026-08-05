@@ -14,6 +14,12 @@ export function SettingsPage() {
   const [data, setData] = useState<SettingsData | null>(null);
   const [saved, setSaved] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
+  const [canes, setCanes] = useState(() => localStorage.getItem('pam-canes') === '1');
+
+  useEffect(() => {
+    document.body.dataset['canes'] = canes ? '1' : '';
+    localStorage.setItem('pam-canes', canes ? '1' : '0');
+  }, [canes]);
 
   useEffect(() => {
     fetch('/api/settings')
@@ -69,6 +75,26 @@ export function SettingsPage() {
               onBlur={(e) => void save('elevenlabs_voice_id', e.target.value.trim())}
             />
           </div>
+        </div>
+      </div>
+      <div className="card">
+        <div className="card-h"><h2>Game day</h2><span className="rule" /></div>
+        <div className="card-body">
+          <label className="canes-toggle">
+            <input
+              type="checkbox"
+              checked={canes}
+              onChange={(e) => setCanes(e.target.checked)}
+              aria-label="Hurricane mode"
+            />
+            <span>
+              <b>Hurricane mode</b>
+              <span className="meta" style={{ display: 'block' }}>
+                Dresses the accents in Miami orange and Hurricane green — links, tabs, and trim.
+                The letterhead stays the firm&rsquo;s. Go Canes.
+              </span>
+            </span>
+          </label>
         </div>
       </div>
       {err && <div className="empty" style={{ color: 'var(--alert)' }}>{err}</div>}

@@ -160,6 +160,21 @@ test('settings: Jeff can edit who PAM is, and it round-trips', async ({ page }) 
   await page.screenshot({ path: 'e2e/screenshots/14-settings.png', fullPage: true });
 });
 
+test('Hurricane mode: the settings toggle dresses the accents and persists', async ({ page }) => {
+  await login(page);
+  await page.goto('/settings');
+  await page.getByLabel('Hurricane mode').check();
+  await expect(page.locator('body')).toHaveAttribute('data-canes', '1');
+  await page.reload();
+  await expect(page.locator('body')).toHaveAttribute('data-canes', '1');
+  await page.goto('/');
+  await expect(page.getByText('Tasks due today')).toBeVisible();
+  await page.screenshot({ path: 'e2e/screenshots/19-hurricane-mode.png', fullPage: true });
+  await page.goto('/settings');
+  await page.getByLabel('Hurricane mode').uncheck();
+  await expect(page.locator('body')).toHaveAttribute('data-canes', '');
+});
+
 test('chat is honest when no API key is configured', async ({ page }) => {
   await login(page);
   await page.locator('.tabbar, .rail').first();

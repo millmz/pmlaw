@@ -58,6 +58,8 @@ export function OrbPage({ chatEnabled }: { chatEnabled: boolean }) {
     const r = new OrbRenderer(canvasRef.current!, getLevel);
     rendererRef.current = r;
     r.start();
+    // Demo hook: lets a console (or a test) throw the Go-Canes burst.
+    (window as unknown as { pamCelebrate?: () => void }).pamCelebrate = () => r.celebrate();
     // Resume open conversation transcript
     fetch('/api/chat/history')
       .then((res) => (res.ok ? res.json() : { messages: [] }))
@@ -103,6 +105,9 @@ export function OrbPage({ chatEnabled }: { chatEnabled: boolean }) {
         return;
       }
       addLine({ who: 'pam', text: finalText });
+      // She only says it on real wins (per her knowledge file) — so when she
+      // does, the orb throws orange and green.
+      if (/go\s*['’]?canes/i.test(finalText)) rendererRef.current?.celebrate();
       if (!muted) {
         setOrb('speaking');
         await speak(finalText, () => {

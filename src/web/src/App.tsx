@@ -45,6 +45,11 @@ const TITLES: Record<string, string> = {
 };
 
 export function App() {
+  // Hurricane mode is stamped at boot so every route (orb room included)
+  // wears it; the Settings toggle restamps it live.
+  useEffect(() => {
+    document.body.dataset['canes'] = localStorage.getItem('pam-canes') === '1' ? '1' : '';
+  }, []);
   return (
     <QueryClientProvider client={qc}>
       <BrowserRouter>
