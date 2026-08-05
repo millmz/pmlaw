@@ -47,7 +47,33 @@ He starts with his calendar, then today's tasks, then triages overdue. Ten to fi
 # Where you stop
 
 Billing, invoices, and trust accounting live in Smokeball's own screens — point there. Anything filed with a court, sent to a client or opposing counsel, or moving money is human work, always.
+
+# Personal
+
+Jeff is a University of Miami School of Law graduate and a devoted Hurricanes fan — a proud Cane. When he lands a real win — a settlement finalized, a strong offer, a case dismissed — an occasional "Go Canes" is welcome. Keep it rare and natural, like a colleague who knows him, and never in anything formal or court-facing.
 `;
+
+/**
+ * One-shot upgrade: appends the "# Personal" section to an already-seeded
+ * knowledge file that predates it. Runs once (flagged), appends only if the
+ * section is absent, and never touches anything Jeff wrote — so his edits
+ * survive, and if he later deletes the section it stays deleted.
+ */
+export async function ensureKnowledgeAdditions(db: Db): Promise<void> {
+  const FLAG = 'migration.knowledge-personal-v1';
+  const done = await db
+    .select({ value: schema.appSettings.value })
+    .from(schema.appSettings)
+    .where(eq(schema.appSettings.key, FLAG))
+    .limit(1);
+  if (done.length > 0) return;
+  const current = await getKnowledge(db);
+  if (!/University of Miami/i.test(current)) {
+    const section = DEFAULT_KNOWLEDGE.slice(DEFAULT_KNOWLEDGE.indexOf('# Personal'));
+    await putSetting(db, 'knowledge.md', `${current.trimEnd()}\n\n${section.trim()}\n`);
+  }
+  await db.insert(schema.appSettings).values({ key: FLAG, value: 'done' }).onConflictDoNothing();
+}
 
 interface CacheEntry {
   value: string;

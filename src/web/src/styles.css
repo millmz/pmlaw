@@ -470,6 +470,17 @@ details.statute[open] > summary::before { transform: rotate(90deg); }
 .login-card h1 .amp { color: var(--oxblood); }
 .login-card p { color: var(--ink-2); font-size: 15.5px; font-family: var(--serif); }
 .login-err { color: var(--alert); font-size: 14.5px; margin-top: 12px; }
+/* The alma-mater bar — a quiet Hurricanes salute in Miami's orange and green. */
+.alma-mater {
+  display: flex; align-items: center; gap: 10px; justify-content: center;
+  margin-top: 26px; cursor: default;
+}
+.alma-mater .um-rule { flex: 0 0 44px; height: 3px; background: #f47321; border-radius: 2px; }
+.alma-mater .um-rule.alt { background: #005030; }
+.alma-mater .um-text {
+  font-family: var(--display); font-size: 10.5px; letter-spacing: 0.28em;
+  text-transform: uppercase; color: var(--ink-3); white-space: nowrap;
+}
 
 /* ─────────────────────────────────────────────────────────────── misc */
 .table-scroll { overflow-x: auto; }

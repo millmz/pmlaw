@@ -191,6 +191,12 @@ export function LoginPage() {
           </button>
         </form>
         {err && <div className="login-err">{err}</div>}
+        {/* The alma-mater bar: Miami Law's orange and green, worn quietly. */}
+        <div className="alma-mater" title="University of Miami School of Law — Go Canes">
+          <span className="um-rule" />
+          <span className="um-text">est. Miami Law</span>
+          <span className="um-rule alt" />
+        </div>
       </div>
     </div>
   );

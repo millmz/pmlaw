@@ -4,6 +4,7 @@ import { SmokeballClient } from '../smokeball/client.js';
 import { openDb } from './db/index.js';
 import { SyncWorker } from './sync/worker.js';
 import { anthropicLlm, pamApiKey, type LlmClient } from './agent/loop.js';
+import { ensureKnowledgeAdditions } from './identity.js';
 import type { ToolContext } from './tools/types.js';
 import { buildApp } from './app.js';
 
@@ -37,6 +38,7 @@ async function main() {
   // PAM_DATA_DIR (a persistent disk in production) makes sessions, memories,
   // and Jeff's identity edits survive restarts; unset = in-memory (dev/tests).
   const { db, close: closeDb } = await openDb(process.env['PAM_DATA_DIR']);
+  await ensureKnowledgeAdditions(db); // one-shot: teach an existing DB who Jeff is
   const worker = new SyncWorker(db, client);
   console.log('[pam] full sync…');
   console.log('[pam] synced:', await worker.fullSync());
