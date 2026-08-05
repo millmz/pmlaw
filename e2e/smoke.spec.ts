@@ -147,17 +147,31 @@ test('the orb room: full-page takeover, reactor canvas, honest diagnostics', asy
   await expect(page.getByRole('heading', { name: 'Today', exact: true })).toBeVisible();
 });
 
-test('settings: Jeff can edit who PAM is, and it round-trips', async ({ page }) => {
+test('settings: Jeff sees only voice + game day; voice ID saves with confirmation', async ({ page }) => {
   await login(page);
   await page.goto('/settings');
+  // Jeff's view: no identity/knowledge editors.
+  await expect(page.getByLabel('Who PAM is')).toHaveCount(0);
+  await expect(page.getByLabel('What PAM always knows')).toHaveCount(0);
+  // Voice ID: explicit Save button, visible confirmation, survives reload.
+  await page.getByLabel(/ElevenLabs voice ID/).fill('E2E_VOICE_ID_123');
+  await page.getByRole('button', { name: 'Save' }).click();
+  await expect(page.locator('.pill.ok')).toBeVisible();
+  await page.reload();
+  await expect(page.getByLabel(/ElevenLabs voice ID/)).toHaveValue('E2E_VOICE_ID_123');
+  await page.screenshot({ path: 'e2e/screenshots/14-settings.png', fullPage: true });
+});
+
+test('settings admin door: identity editors render only with ?admin=1 and round-trip', async ({ page }) => {
+  await login(page);
+  await page.goto('/settings?admin=1');
   const identity = page.getByLabel('Who PAM is');
   await expect(identity).toHaveValue(/You are PAM/);
   await identity.fill('You are PAM. E2E_EDIT_SENTINEL.');
-  await page.getByRole('button', { name: 'Save' }).first().click();
+  await page.getByRole('button', { name: 'Save' }).nth(1).click(); // first Save is the voice card's
   await expect(page.locator('.pill.ok').first()).toBeVisible();
   await page.reload();
   await expect(page.getByLabel('Who PAM is')).toHaveValue(/E2E_EDIT_SENTINEL/);
-  await page.screenshot({ path: 'e2e/screenshots/14-settings.png', fullPage: true });
 });
 
 test('Hurricane mode: the settings toggle dresses the accents and persists', async ({ page }) => {

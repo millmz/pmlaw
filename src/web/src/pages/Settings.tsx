@@ -1,7 +1,12 @@
 import { useEffect, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 
-/** Settings — Jeff edits who PAM is and what she always knows, in plain
- *  English. Saved server-side; takes effect on her very next reply. */
+/**
+ * Settings — Jeff's view is deliberately small: his voice, his game-day
+ * colors. The identity/knowledge editors (how PAM thinks and what she knows)
+ * are Adam's domain: they only render behind /settings?admin=1 so the page
+ * never invites Jeff to rewire his own assistant.
+ */
 
 interface SettingsData {
   'identity.md': string;
@@ -11,9 +16,12 @@ interface SettingsData {
 }
 
 export function SettingsPage() {
+  const [params] = useSearchParams();
+  const admin = params.get('admin') === '1';
   const [data, setData] = useState<SettingsData | null>(null);
   const [saved, setSaved] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
+  const [voiceId, setVoiceId] = useState('');
   const [canes, setCanes] = useState(() => localStorage.getItem('pam-canes') === '1');
 
   useEffect(() => {
@@ -24,7 +32,10 @@ export function SettingsPage() {
   useEffect(() => {
     fetch('/api/settings')
       .then((r) => (r.ok ? r.json() : Promise.reject(new Error(String(r.status)))))
-      .then(setData)
+      .then((d: SettingsData) => {
+        setData(d);
+        setVoiceId(d.elevenlabs_voice_id);
+      })
       .catch(() => setErr('Could not load settings.'));
   }, []);
 
@@ -45,22 +56,12 @@ export function SettingsPage() {
 
   return (
     <div className="page-inner">
-      <Editor
-        title="Who PAM is"
-        hint="Her voice and manner — written like a note to a new hire. Changes apply on her very next reply."
-        value={data['identity.md']}
-        onSave={(v) => save('identity.md', v)}
-        savedFlag={saved === 'identity.md'}
-      />
-      <Editor
-        title="What PAM always knows"
-        hint="Stable firm facts the live data can't tell her: people, conventions, where things live."
-        value={data['knowledge.md']}
-        onSave={(v) => save('knowledge.md', v)}
-        savedFlag={saved === 'knowledge.md'}
-      />
       <div className="card">
-        <div className="card-h"><h2>Voice</h2><span className="rule" /></div>
+        <div className="card-h">
+          <h2>Voice</h2>
+          <span className="rule" />
+          {saved === 'elevenlabs_voice_id' && <span className="pill ok">saved</span>}
+        </div>
         <div className="card-body">
           <p className="meta" style={{ marginTop: 0 }}>
             Premium voice: {data.ttsConfigured ? 'connected (ElevenLabs)' : 'not connected — add ELEVENLABS_API_KEY on the server; the browser voice covers until then.'}
@@ -70,13 +71,17 @@ export function SettingsPage() {
             <input
               id="voiceid"
               className="input"
-              defaultValue={data.elevenlabs_voice_id}
+              value={voiceId}
+              onChange={(e) => setVoiceId(e.target.value)}
               placeholder="e.g. 21m00Tcm4TlvDq8ikWAM"
-              onBlur={(e) => void save('elevenlabs_voice_id', e.target.value.trim())}
             />
+            <button className="btn primary" onClick={() => void save('elevenlabs_voice_id', voiceId.trim())}>
+              Save
+            </button>
           </div>
         </div>
       </div>
+
       <div className="card">
         <div className="card-h"><h2>Game day</h2><span className="rule" /></div>
         <div className="card-body">
@@ -97,6 +102,26 @@ export function SettingsPage() {
           </label>
         </div>
       </div>
+
+      {admin && (
+        <>
+          <Editor
+            title="Who PAM is"
+            hint="Her voice and manner — written like a note to a new hire. Changes apply on her very next reply."
+            value={data['identity.md']}
+            onSave={(v) => save('identity.md', v)}
+            savedFlag={saved === 'identity.md'}
+          />
+          <Editor
+            title="What PAM always knows"
+            hint="Stable firm facts the live data can't tell her: people, conventions, where things live."
+            value={data['knowledge.md']}
+            onSave={(v) => save('knowledge.md', v)}
+            savedFlag={saved === 'knowledge.md'}
+          />
+        </>
+      )}
+
       {err && <div className="empty" style={{ color: 'var(--alert)' }}>{err}</div>}
     </div>
   );
