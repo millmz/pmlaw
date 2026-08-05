@@ -102,6 +102,21 @@ test('mobile: four tabs + More, Tasks reachable', async ({ page }) => {
   await page.screenshot({ path: 'e2e/screenshots/07-mobile.png', fullPage: true });
 });
 
+test('mobile: the orb room fits the phone — no sideways scroll, controls reachable', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await login(page);
+  await page.locator('.tabbar').getByText('PAM').click();
+  await expect(page.locator('.orb-canvas')).toBeVisible();
+  // Nothing may push the page wider than the phone.
+  const overflow = await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
+  expect(overflow).toBeLessThanOrEqual(0);
+  // Command row and input are reachable, and diagnostics reports the
+  // gesture-unlock state we rely on for iOS playback.
+  await page.getByRole('button', { name: '[ system check ]' }).click();
+  await expect(page.locator('.orb-diag')).toContainText('playback unlocked');
+  await page.screenshot({ path: 'e2e/screenshots/15-mobile-orb.png' });
+});
+
 test('Settlement board renders ranked cases with statuses, liens, and tap-to-call', async ({ page }) => {
   await login(page);
   await page.getByRole('link', { name: 'Settle' }).first().click();

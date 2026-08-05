@@ -238,6 +238,7 @@ export function OrbPage({ chatEnabled }: { chatEnabled: boolean }) {
           <div>recognition: {diag.recognitionSupported ? 'supported' : 'NOT SUPPORTED in this browser'}</div>
           <div>microphone: {diag.micPermission}</div>
           <div>audio context: {diag.audioContextState}</div>
+          <div>playback unlocked: {diag.audioUnlocked ? 'yes' : 'not yet — tap the orb once'}</div>
           <div>voice path: {diag.ttsPath}</div>
           <div>last error: {diag.lastError ?? 'none'}</div>
           {brain && (

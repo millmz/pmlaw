@@ -13,6 +13,7 @@ export interface VoiceDiagnostics {
   recognitionSupported: boolean;
   micPermission: string; // granted | denied | prompt | unknown
   audioContextState: string; // running | suspended | none
+  audioUnlocked: boolean; // iOS: has a gesture blessed the playback element yet?
   ttsPath: TtsPath;
   lastError: string | null;
 }
@@ -70,19 +71,66 @@ let lastError: string | null = null;
 let currentAudio: HTMLAudioElement | null = null;
 let keepalive: ReturnType<typeof setInterval> | null = null;
 
-/** Call inside EVERY user gesture — creates/resumes the context while the
- *  gesture window is open (the only time iOS allows it). */
+/** ONE reusable element for all TTS playback. iOS only lets play() succeed on
+ *  an element that already played inside a user gesture — a fresh
+ *  `new Audio()` created after an async fetch is never blessed, so replies
+ *  would be silently rejected on iPhone. primeAudio() blesses this element
+ *  with a beat of silence during the gesture; speak() then reuses it. */
+let sharedAudio: HTMLAudioElement | null = null;
+let audioUnlocked = false;
+/** createMediaElementSource may be called once per element — cache the wiring. */
+let wiredAnalyser: AnalyserNode | null = null;
+let wireAttempted = false;
+
+const SILENT_WAV =
+  'data:audio/wav;base64,UklGRkQAAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YSAAAACAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgA==';
+
+/** Call inside EVERY user gesture — creates/resumes the context and blesses
+ *  the shared audio element while the gesture window is open (the only time
+ *  iOS allows either). */
 export function primeAudio(): void {
   try {
     const Ctor =
       (window as unknown as { AudioContext?: typeof AudioContext; webkitAudioContext?: typeof AudioContext })
         .AudioContext ??
       (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
-    if (!Ctor) return;
-    actx ??= new Ctor();
-    if (actx.state === 'suspended') void actx.resume();
+    if (Ctor) {
+      actx ??= new Ctor();
+      if (actx.state === 'suspended') void actx.resume();
+    }
   } catch (e) {
     lastError = `audio prime: ${String(e)}`;
+  }
+  try {
+    if (!sharedAudio) {
+      sharedAudio = new Audio();
+      sharedAudio.setAttribute('playsinline', '');
+      sharedAudio.preload = 'auto';
+    }
+    // Never touch the element while a reply is playing through it.
+    if (!audioUnlocked && !currentAudio) {
+      const el = sharedAudio;
+      el.muted = true;
+      el.src = SILENT_WAV;
+      const p = el.play();
+      if (p && typeof p.then === 'function') {
+        p.then(
+          () => {
+            el.pause();
+            el.muted = false;
+            audioUnlocked = true;
+          },
+          () => {
+            el.muted = false; // stayed locked; we'll try again on the next tap
+          },
+        );
+      } else {
+        el.muted = false;
+        audioUnlocked = true;
+      }
+    }
+  } catch (e) {
+    lastError = `audio unlock: ${String(e)}`;
   }
 }
 
@@ -98,8 +146,12 @@ export function getLevel(): number {
 
 export function stopSpeaking(): void {
   if (currentAudio) {
+    // Detach handlers BEFORE clearing the source: emptying src fires an error
+    // event, which must not masquerade as "finished speaking."
+    currentAudio.onended = null;
+    currentAudio.onerror = null;
     currentAudio.pause();
-    currentAudio.src = '';
+    currentAudio.removeAttribute('src');
     currentAudio = null;
   }
   if (keepalive) {
@@ -163,19 +215,37 @@ export async function speak(text: string, onEnd: () => void): Promise<TtsPath> {
     });
     if (res.ok) {
       const blob = await res.blob();
-      const audio = new Audio(URL.createObjectURL(blob));
+      const url = URL.createObjectURL(blob);
+      // Reuse the gesture-blessed element — a fresh Audio() here would be
+      // rejected by iOS. If no gesture has primed one yet, fall back to a
+      // fresh element (desktop allows it).
+      const audio = sharedAudio ?? new Audio();
+      sharedAudio = audio;
+      audio.muted = false;
+      audio.src = url;
       currentAudio = audio;
-      analyser = routeThroughAnalyserIfRunning(actx, audio);
-      audio.onended = () => {
+      // Wire the analyser once per element; reuse the cached wiring after.
+      if (!wireAttempted && actx && shouldRouteThroughAnalyser(actx.state)) {
+        wiredAnalyser = routeThroughAnalyserIfRunning(actx, audio);
+        wireAttempted = true;
+      }
+      analyser = wiredAnalyser;
+      const finish = () => {
         analyser = null;
+        URL.revokeObjectURL(url);
         onEnd();
       };
-      audio.onerror = audio.onended as never;
+      audio.onended = finish;
+      audio.onerror = finish as never;
       try {
         await audio.play(); // mobile can reject; fall through to browser voice
       } catch (e) {
         lastError = `audio.play: ${String(e)}`;
+        audio.onended = null;
+        audio.onerror = null;
         analyser = null;
+        currentAudio = null;
+        URL.revokeObjectURL(url);
         await speakBrowser(clean, onEnd);
         return 'browser';
       }
@@ -317,6 +387,7 @@ export async function getDiagnostics(ttsConfigured: boolean): Promise<VoiceDiagn
     recognitionSupported: Boolean(getRecognition()),
     micPermission,
     audioContextState: actx?.state ?? 'none',
+    audioUnlocked,
     ttsPath: ttsConfigured ? 'elevenlabs' : window.speechSynthesis ? 'browser' : 'none',
     lastError,
   };
