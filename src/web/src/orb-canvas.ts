@@ -153,8 +153,11 @@ export class OrbRenderer {
       bright *= 1 + 0.05 * Math.sin(it * 7.1) + 0.035 * Math.sin(it * 11.7);
     }
 
-    // ---- ambient aura, breathing with the body
-    const aura = g.createRadialGradient(cx, cy, R * 0.5, cx, cy, R * 2.1);
+    // ---- ambient aura, breathing with the body. It must reach fully
+    // transparent BEFORE the canvas edge — otherwise the clip line shows as a
+    // rectangle against the page background.
+    const glowR = Math.min(cx, cy) * 0.98;
+    const aura = g.createRadialGradient(cx, cy, R * 0.5, cx, cy, glowR);
     aura.addColorStop(0, `rgba(206, 164, 96, ${0.16 * bright})`);
     aura.addColorStop(0.5, `rgba(140, 92, 46, ${0.07 * bright})`);
     aura.addColorStop(1, 'rgba(0,0,0,0)');
@@ -171,8 +174,9 @@ export class OrbRenderer {
     this.ripples = this.ripples.filter((r) => nowMs - r.born < 2600);
     for (const r of this.ripples) {
       const age = (nowMs - r.born) / 2600; // 0…1
-      const rr = R * (1.02 + age * 0.55);
       const band = R * 0.1 * (1 - age * 0.5);
+      // Expand from the limb toward the canvas edge, but die before reaching it.
+      const rr = R * 1.02 + age * Math.max(R * 0.3, glowR * 0.96 - band - R * 1.02);
       const wave = g.createRadialGradient(cx, cy, Math.max(0, rr - band), cx, cy, rr + band);
       const a = 0.16 * (1 - age) * (1 - age);
       wave.addColorStop(0, 'rgba(214, 178, 106, 0)');

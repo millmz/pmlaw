@@ -462,7 +462,9 @@ table.data td { padding: 10px 12px; border-bottom: 1px solid var(--line-soft); v
 /* ─────────────────────────────────────────────────────────── the orb room */
 .orb-room {
   position: fixed; inset: 0; z-index: 60;
-  background: radial-gradient(ellipse 80% 60% at 50% 38%, var(--frame-2), var(--frame) 70%);
+  /* One flat ground everywhere — the orb's own aura is the only light, so the
+     canvas boundary can never read as a different-colored panel. */
+  background: var(--frame);
   color: var(--frame-ink);
   display: flex; flex-direction: column; align-items: center;
   padding: 18px clamp(14px, 4vw, 40px) calc(18px + env(safe-area-inset-bottom));
