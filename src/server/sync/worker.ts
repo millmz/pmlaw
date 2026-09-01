@@ -23,6 +23,24 @@ import type {
  *    webhooks arrive unordered and duplicated (docs/02).
  */
 
+/**
+ * Wipe the synced mirror (and its cursors) — used when the data SOURCE
+ * changes (mock → staging → production), because sync only upserts and would
+ * otherwise leave the old source's records mixed into the new one's. Leaves
+ * everything PAM owns herself: chat, settings, audit log, memories.
+ */
+export async function clearSyncedData(db: Db): Promise<void> {
+  await db.delete(schema.memos);
+  await db.delete(schema.files);
+  await db.delete(schema.folders);
+  await db.delete(schema.events);
+  await db.delete(schema.tasks);
+  await db.delete(schema.matters);
+  await db.delete(schema.matterTypes);
+  await db.delete(schema.staff);
+  await db.delete(schema.syncState);
+}
+
 const toTaskRow = (t: Task) => ({
   id: t.id,
   matterId: t.matterId ?? null,

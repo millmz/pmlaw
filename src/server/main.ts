@@ -2,10 +2,11 @@ import { buildGoldenDataset, GOLDEN_ANCHOR_ISO } from '../core/golden.js';
 import { createMockSmokeball } from '../smokeball/mock/server.js';
 import { SmokeballClient } from '../smokeball/client.js';
 import { TokenManager, normalizeTokenUrl } from '../smokeball/auth.js';
-import { openDb } from './db/index.js';
-import { SyncWorker } from './sync/worker.js';
+import { eq } from 'drizzle-orm';
+import { openDb, schema } from './db/index.js';
+import { SyncWorker, clearSyncedData } from './sync/worker.js';
 import { anthropicLlm, pamApiKey, type LlmClient } from './agent/loop.js';
-import { ensureKnowledgeAdditions } from './identity.js';
+import { ensureKnowledgeAdditions, putSetting } from './identity.js';
 import type { ToolContext } from './tools/types.js';
 import { buildApp } from './app.js';
 
@@ -61,6 +62,20 @@ async function main() {
   // and Jeff's identity edits survive restarts; unset = in-memory (dev/tests).
   const { db, close: closeDb } = await openDb(process.env['PAM_DATA_DIR']);
   await ensureKnowledgeAdditions(db); // one-shot: teach an existing DB who Jeff is
+
+  // Source-change guard: sync only upserts, so switching data sources (mock →
+  // staging → production) must wipe the mirrored cache or old records linger.
+  // PAM's own data (chat, settings, audit, memories) is untouched.
+  const source = useReal ? new URL(baseUrl).host : 'mock';
+  const prevSource = (
+    await db.select().from(schema.appSettings).where(eq(schema.appSettings.key, 'sync.source')).limit(1)
+  )[0]?.value;
+  if (prevSource !== undefined && prevSource !== source) {
+    console.log(`[pam] data source changed (${prevSource} → ${source}) — clearing synced cache`);
+    await clearSyncedData(db);
+  }
+  await putSetting(db, 'sync.source', source);
+
   const worker = new SyncWorker(db, client);
   console.log('[pam] full sync…');
   console.log('[pam] synced:', await worker.fullSync());
