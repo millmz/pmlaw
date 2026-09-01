@@ -295,6 +295,7 @@ export function buildApp(deps: AppDeps): FastifyInstance {
     await run('events', async () => `${(await sb.listEvents()).length} events`);
     const allOk = Object.values(checks).every((c) => c.ok);
     return {
+      lastSync: worker.lastSync ?? 'no sync attempted yet',
       mode: process.env['SMOKEBALL_BASE_URL'] ? 'REAL Smokeball' : 'mock (golden data)',
       baseUrl: process.env['SMOKEBALL_BASE_URL'] ?? '(mock)',
       auth:

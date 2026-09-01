@@ -77,11 +77,6 @@ async function main() {
   await putSetting(db, 'sync.source', source);
 
   const worker = new SyncWorker(db, client);
-  console.log('[pam] full sync…');
-  console.log('[pam] synced:', await worker.fullSync());
-  const syncTimer = setInterval(() => {
-    worker.incrementalSync().catch((e) => console.error('[pam] incremental sync failed:', e));
-  }, 60_000);
 
   const ctx: ToolContext = {
     db,
@@ -95,9 +90,27 @@ async function main() {
   let llm: LlmClient | undefined;
   if (pamApiKey()) llm = await anthropicLlm();
 
+  // Bind the port BEFORE the first sync: a sync failure against the real API
+  // must leave the server up (and /api/smokeball/verify reachable) rather
+  // than crash-looping the deploy with no open port.
   const app = buildApp({ ctx, worker, llm, accessCode: process.env['PAM_ACCESS_CODE'] });
   const addr = await app.listen({ port: PORT, host: '0.0.0.0' });
   console.log(`[pam] serving at ${addr} (chat ${llm ? 'enabled' : 'DISABLED — no ANTHROPIC_API_KEY'})`);
+
+  console.log('[pam] full sync…');
+  if (useReal) {
+    worker
+      .fullSync()
+      .then((c) => console.log('[pam] synced:', c))
+      .catch((e) => console.error('[pam] full sync failed (server stays up; see /api/smokeball/verify):', e));
+  } else {
+    // The mock is local and deterministic — await it so tests and dev see
+    // data the moment the port answers.
+    console.log('[pam] synced:', await worker.fullSync());
+  }
+  const syncTimer = setInterval(() => {
+    worker.incrementalSync().catch((e) => console.error('[pam] incremental sync failed:', e));
+  }, 60_000);
 
   const shutdown = async () => {
     clearInterval(syncTimer);
