@@ -34,7 +34,9 @@ process.on('uncaughtException', (e) => console.error('[pam] uncaught exception:'
 async function openDbResilient(dataDir: string | undefined) {
   if (!dataDir) return openDb();
   try {
-    return await withTimeout(openDb(dataDir), 45_000, `database open at ${dataDir}`);
+    // A real recovery on Render's disk was observed at ~29s — the margin
+    // must comfortably clear that, since losing the race renames the dir.
+    return await withTimeout(openDb(dataDir), 120_000, `database open at ${dataDir}`);
   } catch (e) {
     const backup = `${dataDir}.wedged-${new Date().toISOString().replace(/[:.]/g, '-')}`;
     console.error(`[pam] boot: ${String(e instanceof Error ? e.message : e)}`);

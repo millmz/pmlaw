@@ -85,8 +85,10 @@ export class SmokeballClient {
       await new Promise((r) => setTimeout(r, 1100));
       return this.request(method, path, body, true);
     }
-    // Token likely aged out mid-flight: refresh once and retry.
-    if (res.status === 401 && this.cfg.tokenProvider && !retried) {
+    // 401: token aged out mid-flight. 403: scopes may have just been granted
+    // in the dev console — scopes live inside the token, so only a fresh one
+    // can pick them up. Either way: refresh once and retry.
+    if ((res.status === 401 || res.status === 403) && this.cfg.tokenProvider && !retried) {
       this.cfg.tokenProvider.invalidate();
       return this.request(method, path, body, true);
     }
