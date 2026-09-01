@@ -274,6 +274,42 @@ export function buildApp(deps: AppDeps): FastifyInstance {
     return { ok: true, counts };
   });
 
+  // Connection check for the real Smokeball cutover: auth + a read from each
+  // core resource, each reported independently. Shapes and counts only —
+  // never credential values. Open /api/smokeball/verify in the browser.
+  app.get('/api/smokeball/verify', async (_req, reply) => {
+    const sb = ctx.smokeball;
+    if (!sb) return reply.code(503).send({ error: 'no Smokeball client configured in this context' });
+    const checks: Record<string, { ok: boolean; detail: string }> = {};
+    const run = async (name: string, fn: () => Promise<string>) => {
+      try {
+        checks[name] = { ok: true, detail: await fn() };
+      } catch (e) {
+        checks[name] = { ok: false, detail: String(e instanceof Error ? e.message : e).slice(0, 300) };
+      }
+    };
+    await run('staff', async () => `${(await sb.listStaff()).length} staff`);
+    await run('matterTypes', async () => `${(await sb.listMatterTypes()).length} matter types`);
+    await run('matters', async () => `${(await sb.listMatters()).length} matters`);
+    await run('tasks', async () => `${(await sb.listTasks()).length} tasks`);
+    await run('events', async () => `${(await sb.listEvents()).length} events`);
+    const allOk = Object.values(checks).every((c) => c.ok);
+    return {
+      mode: process.env['SMOKEBALL_BASE_URL'] ? 'REAL Smokeball' : 'mock (golden data)',
+      baseUrl: process.env['SMOKEBALL_BASE_URL'] ?? '(mock)',
+      auth:
+        process.env['SMOKEBALL_AUTH_URL'] && process.env['SMOKEBALL_CLIENT_ID']
+          ? `oauth (${process.env['SMOKEBALL_REFRESH_TOKEN']?.trim() ? 'refresh_token' : 'client_credentials'} grant)`
+          : 'static token',
+      apiKeyPresent: Boolean(process.env['SMOKEBALL_API_KEY']?.trim()),
+      allOk,
+      checks,
+      next: allOk
+        ? 'Connection healthy. POST /api/sync (or wait a minute) to pull data.'
+        : 'Fix the failing checks above — usually credentials or the auth/base URL pair.',
+    };
+  });
+
   // ------------------------------------------------------------------ chat
   // Server-side persistence: conversations survive reloads and resume the
   // most recent OPEN session under 24h; "new conversation" closes ALL open

@@ -1,6 +1,7 @@
 import { buildGoldenDataset, GOLDEN_ANCHOR_ISO } from '../core/golden.js';
 import { createMockSmokeball } from '../smokeball/mock/server.js';
 import { SmokeballClient } from '../smokeball/client.js';
+import { TokenManager, normalizeTokenUrl } from '../smokeball/auth.js';
 import { openDb } from './db/index.js';
 import { SyncWorker } from './sync/worker.js';
 import { anthropicLlm, pamApiKey, type LlmClient } from './agent/loop.js';
@@ -28,10 +29,31 @@ async function main() {
     console.log(`[pam] mock Smokeball at ${baseUrl}`);
   }
 
+  // Live OAuth when the dev-console credentials are present; static token
+  // (the mock, or a hand-issued bearer) otherwise. docs/02 "Auth".
+  const authUrl = process.env['SMOKEBALL_AUTH_URL']?.trim();
+  const clientId = process.env['SMOKEBALL_CLIENT_ID']?.trim();
+  let tokenProvider: TokenManager | undefined;
+  if (useReal && authUrl && clientId) {
+    tokenProvider = new TokenManager({
+      tokenUrl: normalizeTokenUrl(authUrl),
+      clientId,
+      ...(process.env['SMOKEBALL_CLIENT_SECRET']?.trim()
+        ? { clientSecret: process.env['SMOKEBALL_CLIENT_SECRET']!.trim() }
+        : {}),
+      ...(process.env['SMOKEBALL_REFRESH_TOKEN']?.trim()
+        ? { refreshToken: process.env['SMOKEBALL_REFRESH_TOKEN']!.trim() }
+        : {}),
+      ...(process.env['SMOKEBALL_SCOPE']?.trim() ? { scope: process.env['SMOKEBALL_SCOPE']!.trim() } : {}),
+    });
+    console.log(`[pam] smokeball oauth: ${tokenProvider.grant} grant via ${normalizeTokenUrl(authUrl)}`);
+  }
+
   const client = new SmokeballClient({
     baseUrl,
     apiKey: process.env['SMOKEBALL_API_KEY'] ?? 'mock-api-key',
     accessToken: process.env['SMOKEBALL_TOKEN'] ?? 'mock-token',
+    ...(tokenProvider ? { tokenProvider } : {}),
     rps: useReal ? 4 : 50,
   });
 

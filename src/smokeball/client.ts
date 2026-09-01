@@ -18,10 +18,15 @@ import type {
  * retries once on 429 (docs/02 "Rate limits").
  */
 
+import type { TokenProvider } from './auth.js';
+
 export interface SmokeballConfig {
   baseUrl: string;
   apiKey: string;
-  accessToken: string;
+  /** Static bearer (the mock, or a hand-issued token). */
+  accessToken?: string;
+  /** Live OAuth (production): overrides accessToken; 401s refresh and retry once. */
+  tokenProvider?: TokenProvider;
   /** Requests per second budget; Smokeball grants 5. */
   rps?: number;
 }
@@ -58,13 +63,19 @@ export class SmokeballClient {
     return run.then(fn);
   }
 
+  private async bearer(): Promise<string> {
+    if (this.cfg.tokenProvider) return this.cfg.tokenProvider.getToken();
+    return this.cfg.accessToken ?? '';
+  }
+
   private async request<T>(method: string, path: string, body?: unknown, retried = false): Promise<T> {
+    const token = await this.bearer();
     const res = await this.schedule(() =>
       fetch(`${this.cfg.baseUrl}${path}`, {
         method,
         headers: {
           'x-api-key': this.cfg.apiKey,
-          authorization: `Bearer ${this.cfg.accessToken}`,
+          authorization: `Bearer ${token}`,
           ...(body !== undefined ? { 'content-type': 'application/json' } : {}),
         },
         ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
@@ -72,6 +83,11 @@ export class SmokeballClient {
     );
     if (res.status === 429 && !retried) {
       await new Promise((r) => setTimeout(r, 1100));
+      return this.request(method, path, body, true);
+    }
+    // Token likely aged out mid-flight: refresh once and retry.
+    if (res.status === 401 && this.cfg.tokenProvider && !retried) {
+      this.cfg.tokenProvider.invalidate();
       return this.request(method, path, body, true);
     }
     if (!res.ok) {
@@ -177,19 +193,25 @@ export class SmokeballClient {
     path: string,
     body: unknown,
     requestId?: string,
+    retried = false,
   ): Promise<{ requestId: string }> {
+    const token = await this.bearer();
     const res = await this.schedule(() =>
       fetch(`${this.cfg.baseUrl}${path}`, {
         method,
         headers: {
           'x-api-key': this.cfg.apiKey,
-          authorization: `Bearer ${this.cfg.accessToken}`,
+          authorization: `Bearer ${token}`,
           'content-type': 'application/json',
           ...(requestId ? { requestid: requestId } : {}),
         },
         body: JSON.stringify(body),
       }),
     );
+    if (res.status === 401 && this.cfg.tokenProvider && !retried) {
+      this.cfg.tokenProvider.invalidate();
+      return this.write(method, path, body, requestId, true);
+    }
     if (!res.ok && res.status !== 202) {
       throw new Error(`smokeball ${method} ${path} -> ${res.status}: ${await res.text()}`);
     }

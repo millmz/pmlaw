@@ -30,3 +30,21 @@ services:
         value: /var/data/pam-db
       - key: PAM_ACCESS_CODE
         generateValue: true
+      # ── Real Smokeball (leave unset to run on the mock + golden data).
+      # Staging first: SMOKEBALL_BASE_URL=https://stagingapi.smokeball.com
+      #                SMOKEBALL_AUTH_URL=https://datastaging-auth.smokeball.com
+      # Production:    https://api.smokeball.com / https://auth.smokeball.com
+      - key: SMOKEBALL_BASE_URL
+        sync: false
+      - key: SMOKEBALL_AUTH_URL
+        sync: false
+      - key: SMOKEBALL_API_KEY
+        sync: false
+      - key: SMOKEBALL_CLIENT_ID
+        sync: false
+      - key: SMOKEBALL_CLIENT_SECRET
+        sync: false
+      - key: SMOKEBALL_REFRESH_TOKEN
+        sync: false
+      - key: SMOKEBALL_SCOPE
+        sync: false
