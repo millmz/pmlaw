@@ -7,8 +7,10 @@ import { openDb, schema } from './db/index.js';
 import { SyncWorker, clearSyncedData } from './sync/worker.js';
 import { anthropicLlm, pamApiKey, type LlmClient } from './agent/loop.js';
 import { ensureKnowledgeAdditions, putSetting } from './identity.js';
+import { normalizeBaseUrl, withTimeout } from './boot.js';
 import type { ToolContext } from './tools/types.js';
 import { buildApp } from './app.js';
+import { rename } from 'node:fs/promises';
 
 /**
  * PAM entrypoint. Boots against the mock Smokeball with golden data (default)
@@ -17,12 +19,37 @@ import { buildApp } from './app.js';
 
 const PORT = Number(process.env['PORT'] ?? 8787);
 
+const bootT0 = Date.now();
+const phase = (name: string) => console.log(`[pam] boot: ${name} (+${Date.now() - bootT0}ms)`);
+process.on('unhandledRejection', (e) => console.error('[pam] unhandled rejection:', e));
+process.on('uncaughtException', (e) => console.error('[pam] uncaught exception:', e));
+
+/**
+ * Open the database, surviving a data dir wedged by an earlier crash loop:
+ * if the open (including migrations) stalls or fails, the directory is moved
+ * aside — preserved for inspection, never deleted — and a fresh one is
+ * created. The mirror rebuilds on the next sync; only unsaved local edits to
+ * settings/chat since the last good boot would be lost.
+ */
+async function openDbResilient(dataDir: string | undefined) {
+  if (!dataDir) return openDb();
+  try {
+    return await withTimeout(openDb(dataDir), 45_000, `database open at ${dataDir}`);
+  } catch (e) {
+    const backup = `${dataDir}.wedged-${new Date().toISOString().replace(/[:.]/g, '-')}`;
+    console.error(`[pam] boot: ${String(e instanceof Error ? e.message : e)}`);
+    console.error(`[pam] boot: moving the data dir to ${backup} and starting fresh — synced data rebuilds on the next sync`);
+    await rename(dataDir, backup);
+    return openDb(dataDir);
+  }
+}
+
 async function main() {
   const useReal = Boolean(process.env['SMOKEBALL_BASE_URL']);
   let baseUrl: string;
   let cleanupMock: (() => Promise<void>) | undefined;
   if (useReal) {
-    baseUrl = process.env['SMOKEBALL_BASE_URL']!;
+    baseUrl = normalizeBaseUrl(process.env['SMOKEBALL_BASE_URL']!);
   } else {
     const mock = createMockSmokeball(buildGoldenDataset());
     baseUrl = await mock.listen();
@@ -60,7 +87,9 @@ async function main() {
 
   // PAM_DATA_DIR (a persistent disk in production) makes sessions, memories,
   // and Jeff's identity edits survive restarts; unset = in-memory (dev/tests).
-  const { db, close: closeDb } = await openDb(process.env['PAM_DATA_DIR']);
+  phase('opening database');
+  const { db, close: closeDb } = await openDbResilient(process.env['PAM_DATA_DIR']);
+  phase('database open');
   await ensureKnowledgeAdditions(db); // one-shot: teach an existing DB who Jeff is
 
   // Source-change guard: sync only upserts, so switching data sources (mock →
@@ -75,6 +104,7 @@ async function main() {
     await clearSyncedData(db);
   }
   await putSetting(db, 'sync.source', source);
+  phase('source guard done');
 
   const worker = new SyncWorker(db, client);
 
@@ -89,11 +119,13 @@ async function main() {
 
   let llm: LlmClient | undefined;
   if (pamApiKey()) llm = await anthropicLlm();
+  phase('llm ready');
 
   // Bind the port BEFORE the first sync: a sync failure against the real API
   // must leave the server up (and /api/smokeball/verify reachable) rather
   // than crash-looping the deploy with no open port.
   const app = buildApp({ ctx, worker, llm, accessCode: process.env['PAM_ACCESS_CODE'] });
+  phase('app built, binding port');
   const addr = await app.listen({ port: PORT, host: '0.0.0.0' });
   console.log(`[pam] serving at ${addr} (chat ${llm ? 'enabled' : 'DISABLED — no ANTHROPIC_API_KEY'})`);
 
