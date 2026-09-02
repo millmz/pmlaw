@@ -119,11 +119,18 @@ export function createMockSmokeball(data: FirmDataset, opts: MockOptions = {}): 
   }
 
   app.get('/webhooks', async () => ({ value: [...subscriptions.values()] }));
+  app.get('/webhooks/types', async () => ({
+    value: ['task.created', 'task.updated', 'event.created', 'event.updated', 'matter.updated', 'memo.updated', 'error'].map((t) => ({ id: t, href: `/webhooks/types/${t}` })),
+  }));
   app.post('/webhooks', async (req, reply) => {
-    const body = req.body as { eventTypes: string[]; callbackUrl: string };
+    // Real body: { name, key, eventTypes, eventNotificationUrl } — the KEY is
+    // chosen by the subscriber and signs every notification. Legacy
+    // { callbackUrl } still accepted for older tests.
+    const body = req.body as { name?: string; key?: string; eventTypes: string[]; eventNotificationUrl?: string; callbackUrl?: string };
     const id = randomUUID();
-    subscriptions.set(id, { id, key: webhookKey, ...body });
-    return reply.code(201).send({ id, key: webhookKey });
+    const key = body.key ?? webhookKey;
+    subscriptions.set(id, { id, key, eventTypes: body.eventTypes, callbackUrl: body.eventNotificationUrl ?? body.callbackUrl ?? '' });
+    return reply.code(201).send({ id, key });
   });
   app.delete<{ Params: { id: string } }>('/webhooks/:id', async (req) => {
     subscriptions.delete(req.params.id);
@@ -260,15 +267,19 @@ export function createMockSmokeball(data: FirmDataset, opts: MockOptions = {}): 
   const decodeTaskDue = (b: TaskWire): string | undefined =>
     typeof b.dueDateOnly === 'string' ? b.dueDateOnly.slice(0, 10) : b.dueDate;
 
+  /** Real 202s answer with a hypermedia Link to the record being created. */
+  const accepted = (requestId: string, id: string, href: string) => ({ requestId, id, href, relation: 'self', method: 'GET' });
+
   app.post('/tasks', async (req, reply) => {
     const requestId = (req.headers['requestid'] as string | undefined) ?? randomUUID();
     const body = req.body as TaskWire;
+    const newId = `task-${randomUUID().slice(0, 8)}`;
     asyncWrite(() => {
       if (!body.subject || !body.assigneeIds?.length) return { error: 'subject and assigneeIds required' };
       if (!body.staffId && !body.createdById) return { error: 'staffId required' };
       const due = decodeTaskDue(body);
       const task: Task = {
-        id: `task-${randomUUID().slice(0, 8)}`,
+        id: newId,
         subject: body.subject,
         assigneeIds: body.assigneeIds,
         isCompleted: false,
@@ -282,7 +293,7 @@ export function createMockSmokeball(data: FirmDataset, opts: MockOptions = {}): 
       data.tasks.push(task);
       return { type: 'task.created', payload: task };
     }, requestId);
-    return reply.code(202).send({ requestId });
+    return reply.code(202).send(accepted(requestId, newId, `/tasks/${newId}`));
   });
 
   app.put<{ Params: { id: string } }>('/tasks/:id', async (req, reply) => {
@@ -297,13 +308,19 @@ export function createMockSmokeball(data: FirmDataset, opts: MockOptions = {}): 
       Object.assign(t, rest, due !== undefined ? { dueDate: due } : {}, { updatedAt: nowIso() });
       return { type: 'task.updated', payload: t };
     }, requestId);
-    return reply.code(202).send({ requestId });
+    return reply.code(202).send(accepted(requestId, id, `/tasks/${id}`));
+  });
+
+  app.get<{ Params: { id: string } }>('/events/:id', async (req, reply) => {
+    const e = data.events.find((e) => e.id === req.params.id);
+    return e ? eventToDto(e) : reply.code(404).send({ message: 'not found' });
   });
 
   type EventWire = Partial<CalendarEvent> & { attendees?: string[] };
   app.post('/events', async (req, reply) => {
     const requestId = (req.headers['requestid'] as string | undefined) ?? randomUUID();
     const body = req.body as EventWire;
+    const newId = `event-${randomUUID().slice(0, 8)}`;
     asyncWrite(() => {
       const attendeeIds = body.attendees ?? body.attendeeIds ?? [];
       if (!body.subject || !body.startTime || !body.endTime || attendeeIds.length === 0) {
@@ -313,7 +330,7 @@ export function createMockSmokeball(data: FirmDataset, opts: MockOptions = {}): 
       // Zone-less local times (the wire form) become absolute in tz; absolute ISO passes through.
       const abs = (s: string) => DateTime.fromISO(s, { zone: tz }).toISO()!;
       const event: CalendarEvent = {
-        id: `event-${randomUUID().slice(0, 8)}`,
+        id: newId,
         subject: body.subject,
         startTime: abs(body.startTime),
         endTime: abs(body.endTime),
@@ -329,7 +346,7 @@ export function createMockSmokeball(data: FirmDataset, opts: MockOptions = {}): 
       data.events.push(event);
       return { type: 'event.created', payload: event };
     }, requestId);
-    return reply.code(202).send({ requestId });
+    return reply.code(202).send(accepted(requestId, newId, `/events/${newId}`));
   });
 
   // ------------------------------------------------------------------ admin

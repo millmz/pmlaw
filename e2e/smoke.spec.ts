@@ -170,7 +170,7 @@ test('memories: Jeff sees what PAM remembers and can forget one; admin can seed 
   // Admin door: seed button submits through the (mock) Smokeball API.
   await page.goto('/settings?admin=1');
   await page.getByRole('button', { name: 'Seed a test task + event' }).click();
-  await expect(page.getByText(/appear in PAM after the next sync/)).toBeVisible();
+  await expect(page.getByText(/Both landed in Smokeball/)).toBeVisible({ timeout: 15_000 });
   // The seeded task lands in the mirror via the async write + sync.
   await page.request.post('/api/sync');
   await page.goto('/tasks');

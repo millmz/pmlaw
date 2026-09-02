@@ -310,6 +310,19 @@ export function buildApp(deps: AppDeps): FastifyInstance {
     await run('matters', async () => `${(await sb.listMatters()).length} matters`);
     await run('tasks', async () => `${(await sb.listTasks()).length} tasks`);
     await run('events', async () => `${(await sb.listEvents()).length} events`);
+    // Webhooks: what the API calls its event types, and what's subscribed —
+    // informational (a failure here doesn't count against allOk).
+    const webhooks: Record<string, unknown> = {};
+    try {
+      webhooks['types'] = await sb.listWebhookTypes();
+    } catch (e) {
+      webhooks['types'] = `unavailable: ${String(e instanceof Error ? e.message : e).slice(0, 160)}`;
+    }
+    try {
+      webhooks['subscriptions'] = (await sb.listWebhooks()).value;
+    } catch (e) {
+      webhooks['subscriptions'] = `unavailable: ${String(e instanceof Error ? e.message : e).slice(0, 160)}`;
+    }
     const allOk = Object.values(checks).every((c) => c.ok);
     return {
       storage:
@@ -326,6 +339,7 @@ export function buildApp(deps: AppDeps): FastifyInstance {
       apiKeyPresent: Boolean(process.env['SMOKEBALL_API_KEY']?.trim()),
       allOk,
       checks,
+      webhooks,
       next: allOk
         ? 'Connection healthy. POST /api/sync (or wait a minute) to pull data.'
         : 'Fix the failing checks above — usually credentials or the auth/base URL pair.',
@@ -419,16 +433,28 @@ export function buildApp(deps: AppDeps): FastifyInstance {
       attendeeIds: [ctx.currentStaffId],
       allDay: false,
     });
+    // Writes are async and a rejected one only ever surfaces via webhook —
+    // so poll for each record by the Link id the 202 handed back.
+    const landed = { task: false, event: false };
+    for (let i = 0; i < 16 && !(landed.task && landed.event); i++) {
+      await new Promise((r) => setTimeout(r, 500));
+      if (!landed.task && task.id) landed.task = Boolean(await ctx.smokeball.getTask(task.id));
+      if (!landed.event && event.id) landed.event = Boolean(await ctx.smokeball.getEvent(event.id));
+    }
     await ctx.db.insert(schema.auditLog).values({
       actor: ctx.currentStaffId,
       action: 'write:seed',
-      params: { taskRequestId: task.requestId, eventRequestId: event.requestId },
-      result: 'submitted (async)',
+      params: { task: task.id ?? task.requestId ?? null, event: event.id ?? event.requestId ?? null },
+      result: `task ${landed.task ? 'landed' : 'NOT seen'}, event ${landed.event ? 'landed' : 'NOT seen'}`,
     });
+    const both = landed.task && landed.event;
     return {
       ok: true,
-      submitted: { task: task.requestId, event: event.requestId },
-      note: 'Smokeball applies writes asynchronously. Both entries appear in PAM after the next sync (about a minute) and in Smokeball itself right away.',
+      submitted: { task: task.id ?? task.requestId ?? null, event: event.id ?? event.requestId ?? null },
+      landed,
+      note: both
+        ? 'Both landed in Smokeball — verified by reading them back. They show in PAM after the next sync (about a minute).'
+        : `Smokeball accepted the request${landed.task || landed.event ? ', but only ' + (landed.task ? 'the task' : 'the event') + ' is visible so far' : ', but neither record is visible yet'} — Smokeball rejects invalid writes silently, so if this stays missing after a minute the payload shape needs adjusting (see the server log).`,
     };
   });
 
@@ -522,9 +548,24 @@ export function buildApp(deps: AppDeps): FastifyInstance {
   });
 
   // ---------------------------------------------------------------- webhook
-  app.post('/webhooks/smokeball', async (req) => {
+  // Deliveries are signed HMAC-SHA256(key, `${timestamp}|${requestId}|${clientId}`)
+  // (docs/02). Verified whenever SMOKEBALL_WEBHOOK_KEY is set; the mock path
+  // in tests runs unkeyed.
+  app.post('/webhooks/smokeball', async (req, reply) => {
+    const key = process.env['SMOKEBALL_WEBHOOK_KEY']?.trim();
+    if (key) {
+      const { createHmac, timingSafeEqual } = await import('node:crypto');
+      const h = req.headers;
+      const sig = String(h['signature'] ?? '');
+      const expected = createHmac('sha256', key)
+        .update(`${String(h['timestamp'] ?? '')}|${String(h['requestid'] ?? '')}|${process.env['SMOKEBALL_CLIENT_ID']?.trim() ?? ''}`)
+        .digest('hex');
+      const ok = sig.length === expected.length && timingSafeEqual(Buffer.from(sig), Buffer.from(expected));
+      if (!ok) return reply.code(401).send({ error: 'bad signature' });
+    }
     const { type, payload } = req.body as { type: string; payload: unknown };
-    await worker.applyWebhook(type, payload);
+    if (type === 'error') console.error('[pam] smokeball rejected a write:', JSON.stringify(payload).slice(0, 400));
+    else await worker.applyWebhook(type, payload);
     return {};
   });
 

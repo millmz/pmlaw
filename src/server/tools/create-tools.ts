@@ -136,7 +136,7 @@ const executeTaskCreate: ToolDef = {
     if (!ctx.smokeball) throw new Error('writes unavailable: no Smokeball connection');
 
     const createdAfter = Date.now() - 5_000;
-    await ctx.smokeball.createTask(
+    const receipt = await ctx.smokeball.createTask(
       {
         subject: pending.subject,
         assigneeIds: pending.assigneeIds,
@@ -147,12 +147,15 @@ const executeTaskCreate: ToolDef = {
       ctx.currentStaffId,
     );
 
-    // VERIFY by poll: the new task must be visible with our subject.
+    // VERIFY by poll: by the Link id the 202 handed back when present,
+    // else by subject + recency.
     let created: { id: string } | undefined;
     for (let i = 0; i < 20 && !created; i++) {
       await new Promise((r) => setTimeout(r, 150));
       const tasks = pending.matterId ? await ctx.smokeball.listTasks({ matterId: pending.matterId }) : await ctx.smokeball.listTasks();
-      created = tasks.find((t) => t.subject === pending.subject && !t.isCompleted && new Date(t.createdAt).getTime() >= createdAfter);
+      created = receipt.id
+        ? tasks.find((t) => t.id === receipt.id)
+        : tasks.find((t) => t.subject === pending.subject && !t.isCompleted && new Date(t.createdAt).getTime() >= createdAfter);
       if (created) {
         const t = tasks.find((x) => x.id === created!.id)!;
         await ctx.db
@@ -280,7 +283,7 @@ const executeEventCreate: ToolDef = {
     ctx.confirmations!.delete(confirmationToken);
     if (!ctx.smokeball) throw new Error('writes unavailable: no Smokeball connection');
 
-    await ctx.smokeball.createEvent({
+    const receipt = await ctx.smokeball.createEvent({
       subject: pending.subject,
       startTime: pending.startTime,
       endTime: pending.endTime,
@@ -295,10 +298,11 @@ const executeEventCreate: ToolDef = {
     let created: { id: string } | undefined;
     for (let i = 0; i < 20 && !created; i++) {
       await new Promise((r) => setTimeout(r, 150));
-      const events = await ctx.smokeball.listEvents({ from: day.startOf('day').toISO()!, to: day.endOf('day').toISO()! });
-      const hit = events.find(
-        (e) => e.subject === pending.subject && Math.abs(DateTime.fromISO(e.startTime).toMillis() - DateTime.fromISO(pending.startTime).toMillis()) < 60_000,
-      );
+      const hit = receipt.id
+        ? await ctx.smokeball.getEvent(receipt.id)
+        : (await ctx.smokeball.listEvents({ from: day.startOf('day').toISO()!, to: day.endOf('day').toISO()! })).find(
+            (e) => e.subject === pending.subject && Math.abs(DateTime.fromISO(e.startTime).toMillis() - DateTime.fromISO(pending.startTime).toMillis()) < 60_000,
+          );
       if (hit) {
         created = { id: hit.id };
         await ctx.db

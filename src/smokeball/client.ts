@@ -36,6 +36,13 @@ import {
 
 type Raw = Record<string, unknown>;
 
+/** What a 202 hands back: the mock's requestId and/or the real API's Link (id + href). */
+export interface WriteReceipt {
+  requestId?: string;
+  id?: string;
+  href?: string;
+}
+
 export interface SmokeballConfig {
   baseUrl: string;
   apiKey: string;
@@ -245,8 +252,16 @@ export class SmokeballClient {
   }
 
   // --------------------------------------------------------------- webhooks
-  createWebhook(eventTypes: string[], callbackUrl: string): Promise<{ id: string; key: string }> {
-    return this.request('POST', '/webhooks', { eventTypes, callbackUrl });
+  /** Real body: { name, key, eventTypes, eventNotificationUrl }. The key is
+   *  OURS — Smokeball signs each notification with it (docs/02). */
+  createWebhook(eventTypes: string[], callbackUrl: string, key = 'mock-webhook-key', name = 'PAM'): Promise<{ id: string; key: string }> {
+    return this.request('POST', '/webhooks', { name, key, eventTypes, eventNotificationUrl: callbackUrl });
+  }
+  /** Event type names as the API spells them — read before subscribing. */
+  async listWebhookTypes(): Promise<string[]> {
+    const res = await this.get<{ value?: Raw[] } | Raw[]>('/webhooks/types');
+    const raws = Array.isArray(res) ? res : (res.value ?? []);
+    return raws.map((r) => String(r['id'] ?? r['name'] ?? r['type'] ?? JSON.stringify(r)));
   }
   listWebhooks(): Promise<{ value: { id: string }[] }> {
     return this.get('/webhooks');
@@ -255,16 +270,32 @@ export class SmokeballClient {
     return this.request('DELETE', `/webhooks/${id}`);
   }
 
+  /** One task by id — the API has no GET /tasks/{id}, so this lists and finds
+   *  (narrowed by matter when known). Used to verify async writes landed. */
+  async getTask(id: string, matterId?: string): Promise<Task | null> {
+    const tasks = matterId ? await this.listTasks({ matterId }) : await this.listTasks();
+    return tasks.find((t) => t.id === id) ?? null;
+  }
+  async getEvent(id: string): Promise<CalendarEvent | null> {
+    try {
+      return adaptEvent(await this.get<Raw>(`/events/${id}`));
+    } catch (e) {
+      if (/-> 404/.test(String(e))) return null;
+      throw e;
+    }
+  }
+
   // ----------------------------------------------------------- async writes
   // Core types in; the real DTO goes over the wire. `staffId` is the acting
-  // staff member — REQUIRED by TaskDto.
-  createTask(task: Partial<Task>, staffId: string, requestId?: string): Promise<{ requestId: string }> {
+  // staff member — REQUIRED by TaskDto. A 202 answers with a hypermedia Link
+  // to the record being created — its `id` is how we verify the write landed.
+  createTask(task: Partial<Task>, staffId: string, requestId?: string): Promise<WriteReceipt> {
     return this.write('POST', '/tasks', toTaskDto(task, staffId), requestId);
   }
-  updateTask(id: string, patch: Partial<Task>, staffId: string, requestId?: string): Promise<{ requestId: string }> {
+  updateTask(id: string, patch: Partial<Task>, staffId: string, requestId?: string): Promise<WriteReceipt> {
     return this.write('PUT', `/tasks/${id}`, toTaskDto(patch, staffId), requestId);
   }
-  createEvent(event: Partial<CalendarEvent>, requestId?: string): Promise<{ requestId: string }> {
+  createEvent(event: Partial<CalendarEvent>, requestId?: string): Promise<WriteReceipt> {
     return this.write('POST', '/events', toEventDto(event), requestId);
   }
 
@@ -274,7 +305,7 @@ export class SmokeballClient {
     body: unknown,
     requestId?: string,
     retried = false,
-  ): Promise<{ requestId: string }> {
+  ): Promise<WriteReceipt> {
     const token = await this.bearer();
     const res = await this.schedule(() =>
       fetch(`${this.cfg.baseUrl}${path}`, {
@@ -295,6 +326,11 @@ export class SmokeballClient {
     if (!res.ok && res.status !== 202) {
       throw new Error(`smokeball ${method} ${path} -> ${res.status}: ${await res.text()}`);
     }
-    return (await res.json()) as { requestId: string };
+    const j = (await res.json().catch(() => ({}))) as Raw;
+    return {
+      ...(typeof j['requestId'] === 'string' ? { requestId: j['requestId'] } : {}),
+      ...(typeof j['id'] === 'string' ? { id: j['id'] } : {}),
+      ...(typeof j['href'] === 'string' ? { href: j['href'] } : {}),
+    };
   }
 }
