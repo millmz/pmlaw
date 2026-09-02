@@ -93,11 +93,14 @@ describe('mock smokeball + client', () => {
     received = [];
     await client.createWebhook(['task.created', 'task.updated', 'error'], receiverUrl);
     const before = (await client.listTasks()).length;
-    const { requestId } = await client.createTask({
-      subject: 'JTM - test task from api',
-      assigneeIds: ['s-jeff'],
-      dueDate: '2026-08-01',
-    });
+    const { requestId } = await client.createTask(
+      {
+        subject: 'JTM - test task from api',
+        assigneeIds: ['s-jeff'],
+        dueDate: '2026-08-01',
+      },
+      's-jeff',
+    );
     expect(requestId).toBeTruthy();
     await waitFor(() => received.some((r) => r.type === 'task.created'));
     expect((await client.listTasks()).length).toBe(before + 1);
@@ -107,7 +110,7 @@ describe('mock smokeball + client', () => {
 
   it('async write failure emits an error webhook, not an HTTP error', async () => {
     received = [];
-    const { requestId } = await client.createTask({ subject: '' }); // invalid: no assignees
+    const { requestId } = await client.createTask({ subject: '' }, 's-jeff'); // invalid: no assignees
     expect(requestId).toBeTruthy(); // still 202 — this is the trap docs/02 warns about
     await waitFor(() => received.some((r) => r.type === 'error'));
   });

@@ -2,6 +2,18 @@ import Fastify, { type FastifyInstance } from 'fastify';
 import { createHmac, randomUUID } from 'node:crypto';
 import { DateTime } from 'luxon';
 import type { FirmDataset, Task, CalendarEvent } from '../../core/types.js';
+import {
+  contactIdFor,
+  contactToDto,
+  eventToDto,
+  fileToDto,
+  foldersToDto,
+  matterToDto,
+  matterTypeToDto,
+  memoToDto,
+  staffToDto,
+  taskToDto,
+} from './dto.js';
 
 /**
  * Mock Smokeball API server, faithful to the behaviors that matter for PAM
@@ -119,8 +131,16 @@ export function createMockSmokeball(data: FirmDataset, opts: MockOptions = {}): 
   });
 
   // ------------------------------------------------------------------ reads
-  app.get('/staff', async (req) => page(data.staff, req.query as Record<string, unknown>));
-  app.get('/mattertypes', async (req) => page(data.matterTypes, req.query as Record<string, unknown>));
+  // Every read answers in the REAL wire shape (mock/dto.ts) so the adapter
+  // layer is exercised by the whole suite, not just by staging.
+  app.get('/staff', async (req) => page(data.staff.map(staffToDto), req.query as Record<string, unknown>));
+  app.get('/mattertypes', async (req) =>
+    page(data.matterTypes.map(matterTypeToDto), req.query as Record<string, unknown>),
+  );
+  app.get<{ Params: { id: string } }>('/contacts/:id', async (req, reply) => {
+    const m = data.matters.find((m) => contactIdFor(m.id) === req.params.id);
+    return m ? contactToDto(m) : reply.code(404).send({ message: 'not found' });
+  });
 
   app.get('/matters', async (req) => {
     const q = req.query as Record<string, unknown>;
@@ -137,11 +157,11 @@ export function createMockSmokeball(data: FirmDataset, opts: MockOptions = {}): 
       );
     }
     items = updatedSince(items, q);
-    return page(items, q);
+    return page(items.map(matterToDto), q);
   });
   app.get<{ Params: { id: string } }>('/matters/:id', async (req, reply) => {
     const m = data.matters.find((m) => m.id === req.params.id);
-    return m ?? reply.code(404).send({ message: 'not found' });
+    return m ? matterToDto(m) : reply.code(404).send({ message: 'not found' });
   });
 
   app.get('/tasks', async (req) => {
@@ -153,7 +173,7 @@ export function createMockSmokeball(data: FirmDataset, opts: MockOptions = {}): 
       items = items.filter((t) => t.isCompleted === want);
     }
     items = updatedSince(items, q);
-    return page(items, q);
+    return page(items.map(taskToDto), q);
   });
 
   app.get('/events', async (req) => {
@@ -169,23 +189,27 @@ export function createMockSmokeball(data: FirmDataset, opts: MockOptions = {}): 
     }
     if (typeof q['MatterId'] === 'string') items = items.filter((e) => e.matterId === q['MatterId']);
     items = updatedSince(items, q);
-    return page(items, q);
+    return page(items.map(eventToDto), q);
   });
 
-  app.get<{ Params: { matterId: string } }>('/matters/:matterId/folders', async (req) =>
-    page(data.folders.filter((f) => f.matterId === req.params.matterId), req.query as Record<string, unknown>),
+  // Real document paths live under /matters/{id}/documents/…
+  app.get<{ Params: { matterId: string } }>('/matters/:matterId/documents/folders', async (req) =>
+    page(
+      foldersToDto(
+        data.folders.filter((f) => f.matterId === req.params.matterId),
+        data.files.filter((f) => f.matterId === req.params.matterId),
+      ),
+      req.query as Record<string, unknown>,
+    ),
   );
-  app.get<{ Params: { matterId: string } }>('/matters/:matterId/files', async (req) => {
+  app.get<{ Params: { matterId: string } }>('/matters/:matterId/documents/files', async (req) => {
     const q = req.query as Record<string, unknown>;
     let items = data.files.filter((f) => f.matterId === req.params.matterId);
     if (typeof q['FolderId'] === 'string') items = items.filter((f) => f.folderId === q['FolderId']);
-    return page(
-      items.map(({ content: _content, ...rest }) => rest),
-      q,
-    );
+    return page(items.map(fileToDto), q);
   });
   app.get<{ Params: { matterId: string; fileId: string } }>(
-    '/matters/:matterId/files/:fileId/download',
+    '/matters/:matterId/documents/files/:fileId/download',
     async (req, reply) => {
       const f = data.files.find((f) => f.id === req.params.fileId && f.matterId === req.params.matterId);
       if (!f) return reply.code(404).send({ message: 'not found' });
@@ -200,7 +224,10 @@ export function createMockSmokeball(data: FirmDataset, opts: MockOptions = {}): 
   });
 
   app.get<{ Params: { matterId: string } }>('/matters/:matterId/memos', async (req) =>
-    page(data.memos.filter((m) => m.matterId === req.params.matterId), req.query as Record<string, unknown>),
+    page(
+      data.memos.filter((m) => m.matterId === req.params.matterId).map(memoToDto),
+      req.query as Record<string, unknown>,
+    ),
   );
 
   app.post('/search/files', async (req) => {
@@ -210,7 +237,7 @@ export function createMockSmokeball(data: FirmDataset, opts: MockOptions = {}): 
       (f) => f.name.toLowerCase().includes(q) || (f.content ?? '').toLowerCase().includes(q),
     );
     if (body.matterIds) items = items.filter((f) => body.matterIds!.includes(f.matterId));
-    return { value: items.map(({ content: _content, ...rest }) => rest) };
+    return { value: items.map(fileToDto) };
   });
 
   // ------------------------------------------------- async writes + webhooks
@@ -227,22 +254,30 @@ export function createMockSmokeball(data: FirmDataset, opts: MockOptions = {}): 
     }, 25);
   }
 
+  // Writes arrive in the REAL DTO shape (TaskDto / EventDto) and are decoded
+  // to core here — the same decoding the real API performs server-side.
+  type TaskWire = Partial<Task> & { staffId?: string; dueDateOnly?: string | null };
+  const decodeTaskDue = (b: TaskWire): string | undefined =>
+    typeof b.dueDateOnly === 'string' ? b.dueDateOnly.slice(0, 10) : b.dueDate;
+
   app.post('/tasks', async (req, reply) => {
     const requestId = (req.headers['requestid'] as string | undefined) ?? randomUUID();
-    const body = req.body as Partial<Task>;
+    const body = req.body as TaskWire;
     asyncWrite(() => {
       if (!body.subject || !body.assigneeIds?.length) return { error: 'subject and assigneeIds required' };
+      if (!body.staffId && !body.createdById) return { error: 'staffId required' };
+      const due = decodeTaskDue(body);
       const task: Task = {
         id: `task-${randomUUID().slice(0, 8)}`,
         subject: body.subject,
         assigneeIds: body.assigneeIds,
         isCompleted: false,
-        createdById: body.createdById ?? 'api',
+        createdById: body.staffId ?? body.createdById ?? 'api',
         createdAt: nowIso(),
         updatedAt: nowIso(),
-        ...(body.matterId !== undefined ? { matterId: body.matterId } : {}),
-        ...(body.dueDate !== undefined ? { dueDate: body.dueDate } : {}),
-        ...(body.note !== undefined ? { note: body.note } : {}),
+        ...(body.matterId !== undefined && body.matterId !== null ? { matterId: body.matterId } : {}),
+        ...(due !== undefined ? { dueDate: due } : {}),
+        ...(body.note !== undefined && body.note !== null ? { note: body.note } : {}),
       };
       data.tasks.push(task);
       return { type: 'task.created', payload: task };
@@ -252,37 +287,44 @@ export function createMockSmokeball(data: FirmDataset, opts: MockOptions = {}): 
 
   app.put<{ Params: { id: string } }>('/tasks/:id', async (req, reply) => {
     const requestId = (req.headers['requestid'] as string | undefined) ?? randomUUID();
-    const patch = req.body as Partial<Task>;
+    const body = req.body as TaskWire;
     const id = req.params.id;
     asyncWrite(() => {
       const t = data.tasks.find((t) => t.id === id);
       if (!t) return { error: `task ${id} not found` };
-      Object.assign(t, patch, { updatedAt: nowIso() });
+      const { staffId: _s, dueDateOnly: _d, ...rest } = body;
+      const due = decodeTaskDue(body);
+      Object.assign(t, rest, due !== undefined ? { dueDate: due } : {}, { updatedAt: nowIso() });
       return { type: 'task.updated', payload: t };
     }, requestId);
     return reply.code(202).send({ requestId });
   });
 
+  type EventWire = Partial<CalendarEvent> & { attendees?: string[] };
   app.post('/events', async (req, reply) => {
     const requestId = (req.headers['requestid'] as string | undefined) ?? randomUUID();
-    const body = req.body as Partial<CalendarEvent>;
+    const body = req.body as EventWire;
     asyncWrite(() => {
-      if (!body.subject || !body.startTime || !body.endTime || !body.attendeeIds?.length) {
-        return { error: 'subject, startTime, endTime, attendeeIds required' };
+      const attendeeIds = body.attendees ?? body.attendeeIds ?? [];
+      if (!body.subject || !body.startTime || !body.endTime || attendeeIds.length === 0) {
+        return { error: 'subject, startTime, endTime, attendees required' };
       }
+      const tz = body.timeZone ?? 'America/New_York';
+      // Zone-less local times (the wire form) become absolute in tz; absolute ISO passes through.
+      const abs = (s: string) => DateTime.fromISO(s, { zone: tz }).toISO()!;
       const event: CalendarEvent = {
         id: `event-${randomUUID().slice(0, 8)}`,
         subject: body.subject,
-        startTime: body.startTime,
-        endTime: body.endTime,
-        timeZone: body.timeZone ?? 'America/New_York',
+        startTime: abs(body.startTime),
+        endTime: abs(body.endTime),
+        timeZone: tz,
         allDay: body.allDay ?? false,
-        attendeeIds: body.attendeeIds,
+        attendeeIds,
         onOfficeCalendar: body.onOfficeCalendar ?? false,
         createdAt: nowIso(),
         updatedAt: nowIso(),
-        ...(body.matterId !== undefined ? { matterId: body.matterId } : {}),
-        ...(body.location !== undefined ? { location: body.location } : {}),
+        ...(body.matterId !== undefined && body.matterId !== null ? { matterId: body.matterId } : {}),
+        ...(body.location !== undefined && body.location !== null ? { location: body.location } : {}),
       };
       data.events.push(event);
       return { type: 'event.created', payload: event };

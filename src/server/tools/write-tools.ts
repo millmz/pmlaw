@@ -140,7 +140,7 @@ const executeTaskReschedule: ToolDef = {
     ctx.confirmations!.delete(p.confirmationToken); // single-use
     if (!ctx.smokeball) throw new Error('writes unavailable: no Smokeball connection');
 
-    await ctx.smokeball.updateTask(pending.taskId, { dueDate: pending.newDueDate });
+    await ctx.smokeball.updateTask(pending.taskId, { dueDate: pending.newDueDate }, ctx.currentStaffId);
 
     // VERIFY: Smokeball writes are async (docs/02) — poll until the change is
     // visible in the API before telling the user it happened.

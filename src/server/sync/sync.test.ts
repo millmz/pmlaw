@@ -81,12 +81,15 @@ describe('sync worker', () => {
     const url = await receiver.listen({ port: 0, host: '127.0.0.1' });
     await client.createWebhook(['task.created'], `${url}/hook`);
 
-    await client.createTask({
-      subject: 'JTM - Diary Vasquez sentencing',
-      assigneeIds: ['s-jeff'],
-      matterId: 'm-vasquez',
-      dueDate: '2026-08-20',
-    });
+    await client.createTask(
+      {
+        subject: 'JTM - Diary Vasquez sentencing',
+        assigneeIds: ['s-jeff'],
+        matterId: 'm-vasquez',
+        dueDate: '2026-08-20',
+      },
+      's-jeff',
+    );
 
     const start = Date.now();
     let landed = false;

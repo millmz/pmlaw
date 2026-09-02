@@ -19,6 +19,22 @@ import type {
  */
 
 import type { TokenProvider } from './auth.js';
+import {
+  adaptContactName,
+  adaptEvent,
+  adaptFile,
+  adaptFolders,
+  adaptMatter,
+  adaptMatterType,
+  adaptMemo,
+  adaptStaff,
+  adaptTask,
+  staffUserId,
+  toEventDto,
+  toTaskDto,
+} from './adapt.js';
+
+type Raw = Record<string, unknown>;
 
 export interface SmokeballConfig {
   baseUrl: string;
@@ -44,6 +60,12 @@ export class SmokeballClient {
   private queue: Promise<void> = Promise.resolve();
   private stamps: number[] = [];
   private readonly rps: number;
+  /** Real memos reference USER ids; staff rows carry the mapping. Filled by listStaff. */
+  private userToStaff = new Map<string, string>();
+  /** Client names resolve via /contacts — cached for the process lifetime;
+   *  null = unresolvable (no scope / not found), so we don't retry forever. */
+  private contactNames = new Map<string, { firstName: string; lastName: string } | null>();
+  private contactsWarned = false;
 
   constructor(private cfg: SmokeballConfig) {
     this.rps = cfg.rps ?? 5;
@@ -121,27 +143,67 @@ export class SmokeballClient {
   }
 
   // ------------------------------------------------------------------ reads
-  listStaff(): Promise<Staff[]> {
-    return this.getAll<Staff>('/staff');
+  // Every read goes through adapt.ts: real wire shapes in, core types out.
+  private present<T>(xs: (T | null)[]): T[] {
+    return xs.filter((x): x is T => x !== null);
   }
-  listMatterTypes(): Promise<MatterType[]> {
-    return this.getAll<MatterType>('/mattertypes');
+
+  async listStaff(): Promise<Staff[]> {
+    const raws = await this.getAll<Raw>('/staff');
+    for (const r of raws) {
+      const uid = staffUserId(r);
+      if (uid && typeof r['id'] === 'string') this.userToStaff.set(uid, r['id']);
+    }
+    return this.present(raws.map(adaptStaff));
   }
-  listMatters(params: { updatedSince?: string; status?: string } = {}): Promise<Matter[]> {
+  async listMatterTypes(): Promise<MatterType[]> {
+    return this.present((await this.getAll<Raw>('/mattertypes')).map(adaptMatterType));
+  }
+  async listMatters(params: { updatedSince?: string; status?: string } = {}): Promise<Matter[]> {
     const q = new URLSearchParams();
     if (params.updatedSince) q.set('LastUpdated', isoNoMillis(params.updatedSince));
     if (params.status) q.set('Status', params.status);
     const qs = q.toString();
-    return this.getAll<Matter>(`/matters${qs ? `?${qs}` : ''}`);
+    const matters = this.present((await this.getAll<Raw>(`/matters${qs ? `?${qs}` : ''}`)).map(adaptMatter));
+    // Real matters name clients only by contact ref — resolve the first one.
+    for (const m of matters) {
+      const contactId = m.clientContactIds[0];
+      if (!contactId || m.clientFirstName) continue;
+      const name = await this.contactName(contactId);
+      if (name) {
+        m.clientFirstName = name.firstName;
+        m.clientLastName = name.lastName;
+      }
+    }
+    return matters.map(({ clientContactIds: _c, title: _t, ...core }) => core);
   }
-  listTasks(params: { updatedSince?: string; matterId?: string } = {}): Promise<Task[]> {
+  private async contactName(contactId: string): Promise<{ firstName: string; lastName: string } | null> {
+    const hit = this.contactNames.get(contactId);
+    if (hit !== undefined) return hit;
+    try {
+      const name = adaptContactName(await this.get<Raw>(`/contacts/${contactId}`));
+      this.contactNames.set(contactId, name);
+      return name;
+    } catch (e) {
+      if (!this.contactsWarned) {
+        this.contactsWarned = true;
+        console.error(
+          `[smokeball] /contacts lookup failed (${String(e instanceof Error ? e.message : e).slice(0, 120)}) — ` +
+            'matters will show their title instead of the client name until contacts/read is granted.',
+        );
+      }
+      this.contactNames.set(contactId, null);
+      return null;
+    }
+  }
+  async listTasks(params: { updatedSince?: string; matterId?: string } = {}): Promise<Task[]> {
     const q = new URLSearchParams();
     if (params.updatedSince) q.set('LastUpdated', isoNoMillis(params.updatedSince));
     if (params.matterId) q.set('MatterId', params.matterId);
     const qs = q.toString();
-    return this.getAll<Task>(`/tasks${qs ? `?${qs}` : ''}`);
+    return this.present((await this.getAll<Raw>(`/tasks${qs ? `?${qs}` : ''}`)).map(adaptTask));
   }
-  listEvents(params: { updatedSince?: string; from?: string; to?: string } = {}): Promise<CalendarEvent[]> {
+  async listEvents(params: { updatedSince?: string; from?: string; to?: string } = {}): Promise<CalendarEvent[]> {
     const q = new URLSearchParams();
     // /events has no LastUpdated; its UpdatedSince accepts ISO *without* zone
     // ("YYYY-MM-DDThh:mm:ss"), per the spec example.
@@ -149,20 +211,23 @@ export class SmokeballClient {
     if (params.from) q.set('From', params.from);
     if (params.to) q.set('To', params.to);
     const qs = q.toString();
-    return this.getAll<CalendarEvent>(`/events${qs ? `?${qs}` : ''}`);
+    return this.present((await this.getAll<Raw>(`/events${qs ? `?${qs}` : ''}`)).map(adaptEvent));
   }
-  listFolders(matterId: string): Promise<Folder[]> {
-    return this.getAll<Folder>(`/matters/${matterId}/folders`);
+  async listFolders(matterId: string): Promise<Folder[]> {
+    return adaptFolders(await this.getAll<Raw>(`/matters/${matterId}/documents/folders`), matterId);
   }
-  listFiles(matterId: string): Promise<FileRecord[]> {
-    return this.getAll<FileRecord>(`/matters/${matterId}/files`);
+  async listFiles(matterId: string): Promise<FileRecord[]> {
+    return this.present(
+      (await this.getAll<Raw>(`/matters/${matterId}/documents/files`)).map((r) => adaptFile(r, matterId)),
+    );
   }
-  listMemos(matterId: string): Promise<Memo[]> {
-    return this.getAll<Memo>(`/matters/${matterId}/memos`);
+  async listMemos(matterId: string): Promise<Memo[]> {
+    const toStaff = (userId: string) => this.userToStaff.get(userId) ?? userId;
+    return this.present((await this.getAll<Raw>(`/matters/${matterId}/memos`)).map((r) => adaptMemo(r, toStaff)));
   }
   async downloadFile(matterId: string, fileId: string): Promise<string> {
     const { downloadUrl } = await this.get<{ downloadUrl: string }>(
-      `/matters/${matterId}/files/${fileId}/download`,
+      `/matters/${matterId}/documents/files/${fileId}/download`,
     );
     // Presigned URLs are absolute in production, path-relative in the mock.
     const url = downloadUrl.startsWith('http') ? downloadUrl : `${this.cfg.baseUrl}${downloadUrl}`;
@@ -170,8 +235,13 @@ export class SmokeballClient {
     if (!res.ok) throw new Error(`download failed: ${res.status}`);
     return res.text();
   }
-  searchFiles(query: string, matterIds?: string[]): Promise<{ value: FileRecord[] }> {
-    return this.request('POST', '/search/files', { query, ...(matterIds ? { matterIds } : {}) });
+  async searchFiles(query: string, matterIds?: string[]): Promise<{ value: FileRecord[] }> {
+    const res = await this.request<{ value?: Raw[] } | Raw[]>('POST', '/search/files', {
+      query,
+      ...(matterIds ? { matterIds } : {}),
+    });
+    const raws = Array.isArray(res) ? res : (res.value ?? []);
+    return { value: this.present(raws.map((r) => adaptFile(r, String(r['matterId'] ?? '')))) };
   }
 
   // --------------------------------------------------------------- webhooks
@@ -186,14 +256,16 @@ export class SmokeballClient {
   }
 
   // ----------------------------------------------------------- async writes
-  createTask(task: Partial<Task>, requestId?: string): Promise<{ requestId: string }> {
-    return this.write('POST', '/tasks', task, requestId);
+  // Core types in; the real DTO goes over the wire. `staffId` is the acting
+  // staff member — REQUIRED by TaskDto.
+  createTask(task: Partial<Task>, staffId: string, requestId?: string): Promise<{ requestId: string }> {
+    return this.write('POST', '/tasks', toTaskDto(task, staffId), requestId);
   }
-  updateTask(id: string, patch: Partial<Task>, requestId?: string): Promise<{ requestId: string }> {
-    return this.write('PUT', `/tasks/${id}`, patch, requestId);
+  updateTask(id: string, patch: Partial<Task>, staffId: string, requestId?: string): Promise<{ requestId: string }> {
+    return this.write('PUT', `/tasks/${id}`, toTaskDto(patch, staffId), requestId);
   }
   createEvent(event: Partial<CalendarEvent>, requestId?: string): Promise<{ requestId: string }> {
-    return this.write('POST', '/events', event, requestId);
+    return this.write('POST', '/events', toEventDto(event), requestId);
   }
 
   private async write(

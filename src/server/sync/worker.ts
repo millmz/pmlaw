@@ -1,6 +1,7 @@
 import { eq, getTableColumns, sql } from 'drizzle-orm';
 import { DateTime } from 'luxon';
 import type { SmokeballClient } from '../../smokeball/client.js';
+import { adaptEvent, adaptMatter, adaptMemo, adaptTask } from '../../smokeball/adapt.js';
 import type { Db } from '../db/index.js';
 import { schema } from '../db/index.js';
 import type {
@@ -310,16 +311,22 @@ export class SyncWorker {
     return counts;
   }
 
-  /** Apply a webhook delivery. Idempotent; unknown types are ignored. */
+  /** Apply a webhook delivery. Idempotent; unknown types are ignored. Payloads
+   *  may arrive in the real wire shape — the adapter decodes either. */
   async applyWebhook(type: string, payload: unknown): Promise<void> {
+    const raw = (payload ?? {}) as Record<string, unknown>;
     if (type.startsWith('task.')) {
-      await this.upsert(schema.tasks, [toTaskRow(payload as Task)]);
+      const t = adaptTask(raw);
+      if (t) await this.upsert(schema.tasks, [toTaskRow(t)]);
     } else if (type.startsWith('event.')) {
-      await this.upsert(schema.events, [toEventRow(payload as CalendarEvent)]);
+      const e = adaptEvent(raw);
+      if (e) await this.upsert(schema.events, [toEventRow(e)]);
     } else if (type.startsWith('matter.')) {
-      await this.upsert(schema.matters, [toMatterRow(payload as Matter)]);
+      const m = adaptMatter(raw);
+      if (m) await this.upsert(schema.matters, [toMatterRow(m)]);
     } else if (type.startsWith('memo.')) {
-      await this.upsert(schema.memos, [toMemoRow(payload as Memo)]);
+      const m = adaptMemo(raw, (u) => u);
+      if (m) await this.upsert(schema.memos, [toMemoRow(m)]);
     }
     // 'error' and unhandled types are surfaced by the caller's logging.
   }
