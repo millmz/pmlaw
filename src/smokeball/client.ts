@@ -122,7 +122,7 @@ export class SmokeballClient {
     // in the dev console — scopes live inside the token, so only a fresh one
     // can pick them up. Either way: refresh once and retry.
     if ((res.status === 401 || res.status === 403) && this.cfg.tokenProvider && !retried) {
-      this.cfg.tokenProvider.invalidate();
+      this.cfg.tokenProvider.invalidate(res.status === 401);
       return this.request(method, path, body, true);
     }
     if (!res.ok) {
@@ -320,7 +320,7 @@ export class SmokeballClient {
       }),
     );
     if (res.status === 401 && this.cfg.tokenProvider && !retried) {
-      this.cfg.tokenProvider.invalidate();
+      this.cfg.tokenProvider.invalidate(true);
       return this.write(method, path, body, requestId, true);
     }
     if (!res.ok && res.status !== 202) {

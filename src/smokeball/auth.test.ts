@@ -69,7 +69,7 @@ describe('TokenManager', () => {
     ]);
     const tm = new TokenManager({ tokenUrl: 'https://a/oauth2/token', clientId: 'c', fetchImpl: srv.impl });
     expect(await tm.getToken()).toBe('tok-1');
-    tm.invalidate();
+    tm.invalidate(true); // a 401: the token itself was rejected
     expect(await tm.getToken()).toBe('tok-2');
     expect(srv.calls).toHaveLength(2);
   });
@@ -92,9 +92,24 @@ describe('TokenManager', () => {
     expect(srv.calls).toHaveLength(1);
   });
 
-  it('auth failures raise a short error without echoing the request', async () => {
-    const srv = fakeTokenServer([{ status: 400, body: { error: 'invalid_client' } }]);
+  it('auth failures name the Cognito reason + a hint, and cool down instead of hammering', async () => {
+    const srv = fakeTokenServer([{ status: 400, body: { error: 'invalid_client', error_description: 'secret-ish' } }]);
     const tm = new TokenManager({ tokenUrl: 'https://a/oauth2/token', clientId: 'c', fetchImpl: srv.impl });
-    await expect(tm.getToken()).rejects.toThrow('token endpoint returned 400');
+    await expect(tm.getToken()).rejects.toThrow(/returned 400 \(invalid_client\) — the client id\/secret/);
+    await expect(tm.getToken()).rejects.toThrow(/invalid_client/);
+    await expect(tm.getToken()).rejects.not.toThrow(/secret-ish/);
+    expect(srv.calls).toHaveLength(1); // second/third calls served from the cooldown, not the network
+  });
+
+  it('a fresh token is not invalidated by a scope-less 403 (no refresh storm)', async () => {
+    const srv = fakeTokenServer([
+      { status: 200, body: { access_token: 'young', expires_in: 3600 } },
+      { status: 200, body: { access_token: 'second', expires_in: 3600 } },
+    ]);
+    const tm = new TokenManager({ tokenUrl: 'https://a/oauth2/token', clientId: 'c', fetchImpl: srv.impl });
+    expect(await tm.getToken()).toBe('young');
+    tm.invalidate(); // ignored: token is seconds old
+    expect(await tm.getToken()).toBe('young');
+    expect(srv.calls).toHaveLength(1);
   });
 });
