@@ -8,6 +8,7 @@ import { SyncWorker, clearSyncedData } from './sync/worker.js';
 import { anthropicLlm, pamApiKey, type LlmClient } from './agent/loop.js';
 import { ensureKnowledgeAdditions, putSetting } from './identity.js';
 import { normalizeBaseUrl, withTimeout } from './boot.js';
+import { resolveCurrentStaffId } from './staff.js';
 import type { ToolContext } from './tools/types.js';
 import { buildApp } from './app.js';
 import { rename } from 'node:fs/promises';
@@ -131,11 +132,24 @@ async function main() {
   const addr = await app.listen({ port: PORT, host: '0.0.0.0' });
   console.log(`[pam] serving at ${addr} (chat ${llm ? 'enabled' : 'DISABLED — no ANTHROPIC_API_KEY'})`);
 
+  // Against a real tenant, "Jeff" is a UUID, not the golden 's-jeff' — after
+  // every sync, re-resolve who the current user is in the mirror.
+  const refreshStaff = async () => {
+    const resolved = await resolveCurrentStaffId(db, ctx.currentStaffId);
+    if (resolved !== ctx.currentStaffId) {
+      console.log(`[pam] current staff resolved to ${resolved}`);
+      ctx.currentStaffId = resolved;
+    }
+  };
+
   console.log('[pam] full sync…');
   if (useReal) {
     worker
       .fullSync()
-      .then((c) => console.log('[pam] synced:', c))
+      .then(async (c) => {
+        console.log('[pam] synced:', c);
+        await refreshStaff();
+      })
       .catch((e) => console.error('[pam] full sync failed (server stays up; see /api/smokeball/verify):', e));
   } else {
     // The mock is local and deterministic — await it so tests and dev see
@@ -143,7 +157,10 @@ async function main() {
     console.log('[pam] synced:', await worker.fullSync());
   }
   const syncTimer = setInterval(() => {
-    worker.incrementalSync().catch((e) => console.error('[pam] incremental sync failed:', e));
+    worker
+      .incrementalSync()
+      .then(refreshStaff)
+      .catch((e) => console.error('[pam] incremental sync failed:', e));
   }, 60_000);
 
   const shutdown = async () => {

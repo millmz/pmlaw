@@ -28,6 +28,12 @@ interface ApiTask {
   matterId?: string | null;
 }
 
+/** Tools return `{ error }` instead of data when e.g. the staff member isn't
+ *  in the mirror yet (fresh real-tenant cutover, empty staging DB). The
+ *  dashboard must degrade to empty lists, never 500. */
+const eventsOf = (d: unknown): ApiEvent[] => (d as { events?: ApiEvent[] })?.events ?? [];
+const tasksOf = (d: unknown): ApiTask[] => (d as { tasks?: ApiTask[] })?.tasks ?? [];
+
 export async function getTodayData(ctx: ToolContext) {
   const now = appNow(ctx.fixedNowIso);
 
@@ -44,10 +50,11 @@ export async function getTodayData(ctx: ToolContext) {
     ? await runTool(ctx, 'get_calendar_events', { scope: 'next_week_courts', officeCalendar: true })
     : null;
 
-  const todayEvents = (today.data as { events: ApiEvent[] }).events;
-  const weekEvents = (week.data as { events: ApiEvent[] }).events.filter(
-    (e) => !todayEvents.some((t) => t.id === e.id),
-  );
+  const todayEvents = eventsOf(today.data);
+  const weekEvents = eventsOf(week.data).filter((e) => !todayEvents.some((t) => t.id === e.id));
+  const od = overdue.data as
+    | { needsDecision?: ApiTask[]; statuteReminders?: { note: string; tasks: ApiTask[] } }
+    | undefined;
 
   return {
     dateLabel: now.setZone(FIRM_TZ).toFormat('cccc, LLLL d, yyyy'),
@@ -55,17 +62,15 @@ export async function getTodayData(ctx: ToolContext) {
     asOf: today.asOf,
     todayEvents,
     weekEvents,
-    nextWeekCourts: nextWeekCourts
-      ? (nextWeekCourts.data as { events: ApiEvent[] }).events
-      : null,
-    dueToday: (dueToday.data as { tasks: ApiTask[] }).tasks,
-    overdue: overdue.data as {
-      needsDecision: ApiTask[];
-      statuteReminders: { note: string; tasks: ApiTask[] };
+    nextWeekCourts: nextWeekCourts ? eventsOf(nextWeekCourts.data) : null,
+    dueToday: tasksOf(dueToday.data),
+    overdue: {
+      needsDecision: od?.needsDecision ?? [],
+      statuteReminders: od?.statuteReminders ?? { note: '', tasks: [] },
     },
     watchlist: {
-      stalledMatters: (stalled.data as { matters: { id: string; label: string; lastActivity: string }[] })
-        .matters,
+      stalledMatters:
+        (stalled.data as { matters?: { id: string; label: string; lastActivity: string }[] })?.matters ?? [],
     },
     citationCount:
       today.citations.length +

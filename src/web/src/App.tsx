@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { Component, useEffect, useState, type ReactNode } from 'react';
 import { QueryClient, QueryClientProvider, useQuery } from '@tanstack/react-query';
 import {
   BrowserRouter,
@@ -44,6 +44,28 @@ const TITLES: Record<string, string> = {
   '/activity': 'Activity',
 };
 
+/** A render crash must show a readable card, never a blank page (the empty-
+ *  staging-DB incident: one unhandled error unmounted the whole tree). */
+class ErrorBoundary extends Component<{ children: ReactNode }, { error: Error | null }> {
+  override state = { error: null as Error | null };
+  static getDerivedStateFromError(error: Error) {
+    return { error };
+  }
+  override render() {
+    if (this.state.error) {
+      return (
+        <div style={{ maxWidth: 560, margin: '10vh auto', padding: 24, fontFamily: 'var(--serif)' }}>
+          <h1 style={{ fontFamily: 'var(--display)', letterSpacing: '0.14em' }}>PAM hit a snag</h1>
+          <p>Something broke while drawing this screen. Reloading usually clears it.</p>
+          <p style={{ color: 'var(--ink-3)', fontSize: 14 }}>Details: {this.state.error.message}</p>
+          <button className="btn primary" onClick={() => window.location.reload()}>Reload</button>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
+
 export function App() {
   // Hurricane mode is stamped at boot so every route (orb room included)
   // wears it; the Settings toggle restamps it live.
@@ -51,15 +73,17 @@ export function App() {
     document.body.dataset['canes'] = localStorage.getItem('pam-canes') === '1' ? '1' : '';
   }, []);
   return (
-    <QueryClientProvider client={qc}>
-      <BrowserRouter>
-        <Routes>
-          <Route path="/login" element={<LoginPage />} />
-          <Route path="/pam" element={<OrbGate />} />
-          <Route path="/*" element={<Shell />} />
-        </Routes>
-      </BrowserRouter>
-    </QueryClientProvider>
+    <ErrorBoundary>
+      <QueryClientProvider client={qc}>
+        <BrowserRouter>
+          <Routes>
+            <Route path="/login" element={<LoginPage />} />
+            <Route path="/pam" element={<OrbGate />} />
+            <Route path="/*" element={<Shell />} />
+          </Routes>
+        </BrowserRouter>
+      </QueryClientProvider>
+    </ErrorBoundary>
   );
 }
 

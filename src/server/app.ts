@@ -108,21 +108,22 @@ export function buildApp(deps: AppDeps): FastifyInstance {
 
     const events = await runTool(ctx, 'get_calendar_events', { scope: 'range', from: iso, to: iso });
     const allTasks = await runTool(ctx, 'get_tasks', { status: 'all_open' });
-    const buckets = allTasks.data as {
-      overdue: { dueDate?: string | null }[];
-      dueToday: { dueDate?: string | null }[];
-      upcoming: { dueDate?: string | null }[];
-    };
+    // Tools answer { error } (no buckets) when the staff member isn't in the
+    // mirror yet — degrade to empty lists, never 500 (blank-site bug).
+    type DueRow = { dueDate?: string | null };
+    const buckets = allTasks.data as
+      | { overdue?: DueRow[]; dueToday?: DueRow[]; upcoming?: DueRow[] }
+      | undefined;
     const tasksDue = isToday
-      ? buckets.dueToday
-      : [...buckets.upcoming, ...buckets.overdue].filter((t) => t.dueDate === iso);
+      ? (buckets?.dueToday ?? [])
+      : [...(buckets?.upcoming ?? []), ...(buckets?.overdue ?? [])].filter((t) => t.dueDate === iso);
 
     return {
       dateIso: iso,
       isToday,
       todayIso: now.setZone(FIRM_TZ).toISODate(),
       label: target.toFormat(isToday ? "'Today —' cccc, LLLL d" : 'cccc, LLLL d'),
-      events: (events.data as { events: unknown[] }).events,
+      events: (events.data as { events?: unknown[] })?.events ?? [],
       tasksDue,
       asOf: events.asOf,
     };
@@ -138,16 +139,21 @@ export function buildApp(deps: AppDeps): FastifyInstance {
       await runTool(ctx, 'get_tasks', { status: 'overdue' }),
     ];
     type Row = { subject: string };
-    const allData = all.data as { dueToday: Row[]; upcoming: Row[] };
-    const od = overdue.data as { needsDecision: Row[]; statuteReminders: { note: string; tasks: Row[] } };
-    const statuteUpcoming = [...allData.dueToday, ...allData.upcoming].filter((t) => isStatuteReminder(t.subject));
+    const allData = all.data as { dueToday?: Row[]; upcoming?: Row[] } | undefined;
+    const od = overdue.data as
+      | { needsDecision?: Row[]; statuteReminders?: { note: string; tasks: Row[] } }
+      | undefined;
+    const dueToday = allData?.dueToday ?? [];
+    const upcoming = allData?.upcoming ?? [];
+    const statute = od?.statuteReminders ?? { note: '', tasks: [] };
+    const statuteUpcoming = [...dueToday, ...upcoming].filter((t) => isStatuteReminder(t.subject));
     return {
-      dueToday: allData.dueToday.filter((t) => !isStatuteReminder(t.subject)),
-      upcoming: allData.upcoming.filter((t) => !isStatuteReminder(t.subject)),
-      needsDecision: od.needsDecision,
+      dueToday: dueToday.filter((t) => !isStatuteReminder(t.subject)),
+      upcoming: upcoming.filter((t) => !isStatuteReminder(t.subject)),
+      needsDecision: od?.needsDecision ?? [],
       statuteReminders: {
-        note: od.statuteReminders.note,
-        tasks: [...od.statuteReminders.tasks, ...statuteUpcoming],
+        note: statute.note,
+        tasks: [...statute.tasks, ...statuteUpcoming],
       },
       asOf: all.asOf,
     };
