@@ -70,9 +70,11 @@ export function createMockSmokeball(data: FirmDataset, opts: MockOptions = {}): 
   };
 
   const updatedSince = <T extends { updatedAt: string }>(items: T[], q: Record<string, unknown>) => {
-    const since = q['UpdatedSince'] ?? q['updatedSince'];
+    // Real API: LastUpdated (ISO) is current; UpdatedSince is legacy (and on
+    // /matters//tasks actually wants ticks). Accept both here.
+    const since = q['LastUpdated'] ?? q['lastUpdated'] ?? q['UpdatedSince'] ?? q['updatedSince'];
     if (typeof since !== 'string' || since === '') return items;
-    const cut = DateTime.fromISO(since);
+    const cut = DateTime.fromISO(since, { zone: 'utc' }); // zone-less strings (events form) are UTC
     return items.filter((i) => DateTime.fromISO(i.updatedAt) >= cut);
   };
 

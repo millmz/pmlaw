@@ -36,6 +36,10 @@ interface Paged<T> {
   total?: number;
 }
 
+/** Real Smokeball rejects fractional seconds on date-time filters
+ *  (staging 400: "not valid for UpdatedSince") — send second precision. */
+const isoNoMillis = (iso: string): string => iso.replace(/\.\d+(?=(Z|[+-]\d{2}:?\d{2})?$)/, '');
+
 export class SmokeballClient {
   private queue: Promise<void> = Promise.resolve();
   private stamps: number[] = [];
@@ -125,21 +129,23 @@ export class SmokeballClient {
   }
   listMatters(params: { updatedSince?: string; status?: string } = {}): Promise<Matter[]> {
     const q = new URLSearchParams();
-    if (params.updatedSince) q.set('UpdatedSince', params.updatedSince);
+    if (params.updatedSince) q.set('LastUpdated', isoNoMillis(params.updatedSince));
     if (params.status) q.set('Status', params.status);
     const qs = q.toString();
     return this.getAll<Matter>(`/matters${qs ? `?${qs}` : ''}`);
   }
   listTasks(params: { updatedSince?: string; matterId?: string } = {}): Promise<Task[]> {
     const q = new URLSearchParams();
-    if (params.updatedSince) q.set('UpdatedSince', params.updatedSince);
+    if (params.updatedSince) q.set('LastUpdated', isoNoMillis(params.updatedSince));
     if (params.matterId) q.set('MatterId', params.matterId);
     const qs = q.toString();
     return this.getAll<Task>(`/tasks${qs ? `?${qs}` : ''}`);
   }
   listEvents(params: { updatedSince?: string; from?: string; to?: string } = {}): Promise<CalendarEvent[]> {
     const q = new URLSearchParams();
-    if (params.updatedSince) q.set('UpdatedSince', params.updatedSince);
+    // /events has no LastUpdated; its UpdatedSince accepts ISO *without* zone
+    // ("YYYY-MM-DDThh:mm:ss"), per the spec example.
+    if (params.updatedSince) q.set('UpdatedSince', isoNoMillis(params.updatedSince).replace(/Z$/, ''));
     if (params.from) q.set('From', params.from);
     if (params.to) q.set('To', params.to);
     const qs = q.toString();

@@ -1,4 +1,4 @@
-import { eq, sql } from 'drizzle-orm';
+import { eq, getTableColumns, sql } from 'drizzle-orm';
 import { DateTime } from 'luxon';
 import type { SmokeballClient } from '../../smokeball/client.js';
 import type { Db } from '../db/index.js';
@@ -164,19 +164,28 @@ export class SyncWorker {
     private client: SmokeballClient,
   ) {}
 
+  /** Batched multi-row upsert — a real tenant's /mattertypes is a ~20k-row
+   *  global catalog, and one INSERT per row made the first sync crawl.
+   *  Conflict updates take each column from EXCLUDED, so every batch is a
+   *  single statement regardless of row count. */
   private async upsert<T extends { id: string }>(
     table: typeof schema.staff | typeof schema.matterTypes | typeof schema.matters | typeof schema.tasks | typeof schema.events | typeof schema.folders | typeof schema.files | typeof schema.memos,
     rows: Record<string, unknown>[],
   ): Promise<void> {
     if (rows.length === 0) return;
-    for (const row of rows) {
+    // A batch may not touch the same id twice (Postgres rejects it) — last wins.
+    rows = [...new Map(rows.map((r) => [r['id'], r])).values()];
+    const set: Record<string, unknown> = {};
+    for (const [key, col] of Object.entries(getTableColumns(table))) {
+      if (key === 'id') continue;
+      set[key] = key === 'syncedAt' ? sql`now()` : sql.raw(`excluded."${col.name}"`);
+    }
+    const BATCH = 400;
+    for (let i = 0; i < rows.length; i += BATCH) {
       await this.db
         .insert(table)
-        .values(row as never)
-        .onConflictDoUpdate({
-          target: table.id,
-          set: { ...row, syncedAt: sql`now()` } as never,
-        });
+        .values(rows.slice(i, i + BATCH) as never)
+        .onConflictDoUpdate({ target: table.id, set: set as never });
     }
   }
 
