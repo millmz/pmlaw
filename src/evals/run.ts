@@ -74,8 +74,12 @@ async function main() {
     for (const s of c.mustContain ?? []) {
       if (!text.includes(s.toLowerCase())) problems.push(`missing: "${s}"`);
     }
-    for (const pattern of c.mustMatchAny ?? []) {
+    for (const pattern of c.mustMatchAll ?? []) {
       if (!new RegExp(pattern, 'i').test(turn.text)) problems.push(`no match for: /${pattern}/`);
+    }
+    // ANY-of, as documented: the required conduct is fixed, the wording varies.
+    if (c.mustMatchAny && c.mustMatchAny.length > 0 && !c.mustMatchAny.some((p) => new RegExp(p, 'i').test(turn.text))) {
+      problems.push(`none of mustMatchAny matched: ${c.mustMatchAny.map((p) => `/${p}/`).join(' ')}`);
     }
     for (const s of c.mustNotContain ?? []) {
       if (text.includes(s.toLowerCase())) problems.push(`FORBIDDEN present: "${s}"`);

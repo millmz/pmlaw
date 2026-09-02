@@ -3,16 +3,40 @@ import type { Db } from '../db/index.js';
 import type { SmokeballClient } from '../../smokeball/client.js';
 import type { Citation } from './citations.js';
 
-export interface PendingConfirmation {
-  action: 'task_reschedule';
-  taskId: string;
-  matterId?: string | undefined;
-  taskSubject: string;
-  oldDueDate?: string | undefined;
-  newDueDate: string;
-  reason?: string | undefined;
-  expiresAt: number;
-}
+/** Single-use, payload-bound confirmations for the write flow (docs/03). */
+export type PendingConfirmation =
+  | {
+      action: 'task_reschedule';
+      taskId: string;
+      matterId?: string | undefined;
+      taskSubject: string;
+      oldDueDate?: string | undefined;
+      newDueDate: string;
+      reason?: string | undefined;
+      expiresAt: number;
+    }
+  | {
+      action: 'task_create';
+      subject: string;
+      dueDate?: string | undefined;
+      matterId?: string | undefined;
+      matterLabel?: string | undefined;
+      note?: string | undefined;
+      assigneeIds: string[];
+      expiresAt: number;
+    }
+  | {
+      action: 'event_create';
+      subject: string;
+      startTime: string;
+      endTime: string;
+      timeZone: string;
+      matterId?: string | undefined;
+      matterLabel?: string | undefined;
+      location?: string | undefined;
+      attendeeIds: string[];
+      expiresAt: number;
+    };
 
 export interface ToolContext {
   db: Db;

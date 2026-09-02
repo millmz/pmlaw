@@ -129,7 +129,7 @@ const executeTaskReschedule: ToolDef = {
     const p = executeSchema.parse(raw);
     const asOf = new Date().toISOString();
     const pending = ctx.confirmations?.get(p.confirmationToken);
-    if (!pending || pending.expiresAt < Date.now()) {
+    if (!pending || pending.expiresAt < Date.now() || pending.action !== 'task_reschedule') {
       ctx.confirmations?.delete(p.confirmationToken);
       return {
         data: { error: 'That confirmation has expired or was already used — propose the change again.' },

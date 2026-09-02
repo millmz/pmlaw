@@ -68,3 +68,24 @@ Smokeball ships "Archie", and its May 2026 "Next Generation" release is agentic:
 8. Verify per-user permission enforcement: `UserId` header with a restricted test user vs. without.
 9. Measure real rate-limit behavior and full-sync duration estimate for the firm's matter count.
 10. Write the final capability matrix deltas back into this doc; every ❌/⚠️ gets a decided workaround.
+
+## Reality deltas (learned on the staging cutover, Sept 2026)
+
+Everything below was invisible against the mock and surfaced only when real
+credentials arrived. The adapter layer (`src/smokeball/adapt.ts`) absorbs all
+of it; the mock now emits these real shapes so the suite exercises the adapter.
+
+| Area | Spec-derived assumption | Reality | Handling |
+|---|---|---|---|
+| Auth | static bearer | OAuth2 (Cognito) client-credentials, 60-min access tokens; **scopes live inside the token** | `TokenManager` refreshes at 60s-before-expiry; 401 **and 403** trigger one refresh+retry so newly granted scopes apply within a sync cycle |
+| Scopes | n/a | Per-app scopes in the Developer Console (`matters/read`, `tasks/write`, …); missing scope = 403 `execute-api:Invoke` | Documented in the console checklist; `contacts/read` is optional (title fallback) |
+| Incremental filters | `UpdatedSince=<ISO>` | `/matters`, `/tasks`: `UpdatedSince` is the **deprecated .NET-ticks** form; current param is `LastUpdated=<ISO, no millis>`. `/events`: `UpdatedSince` with **zone-less** ISO | client sends the right form per resource |
+| Staff | full rows | `initials`/`role` may be null; `userId` ≠ `id` (memos reference users) | derive initials; user→staff map from the staff list |
+| Tasks | `assigneeIds`, `dueDate`, `createdById` | `assignees[{id}]`, `dueDateOnly`, `createdBy{id}`, `matter{id}`, `lastUpdated` as **ticks**, `isDeleted` | adapter; deleted rows dropped |
+| Events | `attendeeIds`, absolute times | `attendees[{id}]`, zone-less `startTime/endTime` + IANA `timeZone`, no office-calendar flag | times made absolute in `timeZone`; office-calendar mapping TBD on live data |
+| Matters | client names inline; statute/date-of-loss fields | `clients[{id}]` contact refs; names via `GET /contacts/{id}`; custom fields under `items` (key names TBD) | contacts resolved + cached; `title` fallback; custom-field keys confirmed on first real matter |
+| Matter types | firm's handful | ~20,000-row global catalog | batched upserts (400/statement) |
+| Memos | plain `text` | RTF `text` + `plainText`, `createdByUserId` | prefer `plainText`; RTF stripped otherwise |
+| Documents | `/matters/{id}/files`, `/folders` | `/matters/{id}/documents/files`, `/documents/folders` (root nodes with a `folders` tree), `/documents/files/{id}/download`; `name` + separate `fileExtension` | paths + flattening + name joining |
+| Writes | core shapes | `TaskDto` requires `staffId`, uses `dueDateOnly`; `EventDto` uses `attendees` + local times + `timeZone` | encoded in `toTaskDto` / `toEventDto` |
+| Ops | — | a crash-looped deploy can leave the PGlite dir needing ~30s recovery; Render disks must be attached explicitly (blueprint didn't) | boot phases logged; DB-open watchdog with move-aside; in-memory fallback with loud warning |

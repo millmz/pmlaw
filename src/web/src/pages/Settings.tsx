@@ -14,6 +14,14 @@ interface SettingsData {
   elevenlabs_voice_id: string;
   ttsConfigured: boolean;
 }
+interface Memory {
+  id: string;
+  type: string;
+  hook: string;
+  body: string;
+  taughtBy: string;
+  createdAt: string;
+}
 
 export function SettingsPage() {
   const [params] = useSearchParams();
@@ -23,6 +31,30 @@ export function SettingsPage() {
   const [err, setErr] = useState<string | null>(null);
   const [voiceId, setVoiceId] = useState('');
   const [canes, setCanes] = useState(() => localStorage.getItem('pam-canes') === '1');
+  const [memories, setMemories] = useState<Memory[]>([]);
+  const [seedResult, setSeedResult] = useState<string | null>(null);
+
+  const loadMemories = () =>
+    fetch('/api/memories')
+      .then((r) => (r.ok ? r.json() : { memories: [] }))
+      .then((d: { memories: Memory[] }) => setMemories(d.memories))
+      .catch(() => undefined);
+  useEffect(() => {
+    void loadMemories();
+  }, []);
+
+  const forget = async (m: Memory) => {
+    if (!window.confirm(`Forget "${m.hook}"? PAM won't remember it again unless you teach her.`)) return;
+    await fetch(`/api/memories/${m.id}`, { method: 'DELETE' });
+    void loadMemories();
+  };
+
+  const seed = async () => {
+    setSeedResult('Sending…');
+    const res = await fetch('/api/smokeball/seed', { method: 'POST' });
+    const body = (await res.json().catch(() => ({}))) as { note?: string; error?: string };
+    setSeedResult(res.ok ? (body.note ?? 'Submitted.') : `Failed: ${body.error ?? res.status}`);
+  };
 
   useEffect(() => {
     document.body.dataset['canes'] = canes ? '1' : '';
@@ -103,8 +135,48 @@ export function SettingsPage() {
         </div>
       </div>
 
+      <div className="card">
+        <div className="card-h">
+          <h2>What PAM remembers</h2>
+          <span className="rule" />
+          <span className="count">{memories.length}</span>
+        </div>
+        <div className="card-body">
+          <p className="meta" style={{ marginTop: 0 }}>
+            Working preferences and firm process she has been taught — never client details. Tell her
+            &ldquo;remember that&hellip;&rdquo; to add one; forget anything here.
+          </p>
+          {memories.length === 0 && <div className="empty">Nothing yet. She learns as you talk.</div>}
+          {memories.map((m) => (
+            <div className="row" key={m.id}>
+              <span className="t" style={{ minWidth: 96 }}>
+                <span className="pill info">{m.type}</span>
+              </span>
+              <span className="grow">
+                <b>{m.hook}</b>
+                <div className="meta">{m.body}</div>
+              </span>
+              <span className="act">
+                <button className="btn ghost small" onClick={() => void forget(m)}>Forget</button>
+              </span>
+            </div>
+          ))}
+        </div>
+      </div>
+
       {admin && (
         <>
+          <div className="card">
+            <div className="card-h"><h2>Staging tools</h2><span className="rule" /></div>
+            <div className="card-body">
+              <p className="meta" style={{ marginTop: 0 }}>
+                Creates one clearly-labeled test task (due today) and one test event (tomorrow 10:00) through the
+                live Smokeball API — proving reads and writes end to end. Both are safe to delete in Smokeball.
+              </p>
+              <button className="btn primary" onClick={() => void seed()}>Seed a test task + event</button>
+              {seedResult && <div className="meta" style={{ marginTop: 10 }}>{seedResult}</div>}
+            </div>
+          </div>
           <Editor
             title="Who PAM is"
             hint="Her voice and manner — written like a note to a new hire. Changes apply on her very next reply."

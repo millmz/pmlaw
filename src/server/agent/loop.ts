@@ -5,6 +5,7 @@ import type { Citation } from '../tools/citations.js';
 import { appNow } from '../../core/dates.js';
 import { getIdentity, getKnowledge } from '../identity.js';
 import { buildDynamicBlock, buildStableBlock, type SystemBlock } from './system-prompt.js';
+import { memoryLines } from '../tools/memory-tools.js';
 import { buildSnapshot } from './snapshot.js';
 
 /**
@@ -94,10 +95,11 @@ export async function runAgentTurn(
 ): Promise<AgentTurnResult> {
   const messages: LlmMessage[] = [...history, { role: 'user', content: userMessage }];
   const tools = toolDefinitions();
-  const [identity, knowledge, snapshot] = [
+  const [identity, knowledge, snapshot, memories] = [
     await getIdentity(ctx.db),
     await getKnowledge(ctx.db),
     await buildSnapshot(ctx),
+    await memoryLines(ctx.db),
   ];
   const system: SystemBlock[] = [
     { text: buildStableBlock(identity, knowledge), cache: true },
@@ -105,6 +107,7 @@ export async function runAgentTurn(
       text: buildDynamicBlock({
         now: appNow(ctx.fixedNowIso),
         snapshot,
+        memories,
         longConversation: history.length >= 28, // ~14 turns → drift checkpoint
       }),
     },

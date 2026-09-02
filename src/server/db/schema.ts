@@ -126,6 +126,8 @@ export const chatSessions = pgTable('chat_sessions', {
   closed: boolean('closed').notNull().default(false),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  /** Set once the quiet memory extractor has processed this session. */
+  extractedAt: timestamp('extracted_at', { withTimezone: true }),
 });
 
 export const chatMessages = pgTable('chat_messages', {

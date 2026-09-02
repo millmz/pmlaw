@@ -162,6 +162,21 @@ test('settings: Jeff sees only voice + game day; voice ID saves with confirmatio
   await page.screenshot({ path: 'e2e/screenshots/14-settings.png', fullPage: true });
 });
 
+test('memories: Jeff sees what PAM remembers and can forget one; admin can seed a test task + event', async ({ page }) => {
+  await login(page);
+  await page.goto('/settings');
+  await expect(page.getByText('What PAM remembers')).toBeVisible();
+  await expect(page.getByText('Nothing yet. She learns as you talk.')).toBeVisible();
+  // Admin door: seed button submits through the (mock) Smokeball API.
+  await page.goto('/settings?admin=1');
+  await page.getByRole('button', { name: 'Seed a test task + event' }).click();
+  await expect(page.getByText(/appear in PAM after the next sync/)).toBeVisible();
+  // The seeded task lands in the mirror via the async write + sync.
+  await page.request.post('/api/sync');
+  await page.goto('/tasks');
+  await expect(page.getByText(/PAM test task/)).toBeVisible();
+});
+
 test('settings admin door: identity editors render only with ?admin=1 and round-trip', async ({ page }) => {
   await login(page);
   await page.goto('/settings?admin=1');

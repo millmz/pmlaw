@@ -1,0 +1,1 @@
+ALTER TABLE "chat_sessions" ADD COLUMN "extracted_at" timestamp with time zone;

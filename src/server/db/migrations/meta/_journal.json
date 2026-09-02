@@ -22,6 +22,13 @@
       "when": 1785879246070,
       "tag": "0002_military_the_professor",
       "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1788375753961,
+      "tag": "0003_memory_extracted_at",
+      "breakpoints": true
     }
   ]
 }

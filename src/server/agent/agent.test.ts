@@ -55,6 +55,13 @@ describe('agent loop', () => {
       'get_settlement_timeline',
       'propose_task_reschedule',
       'execute_task_reschedule',
+      'propose_task_create',
+      'execute_task_create',
+      'propose_event_create',
+      'execute_event_create',
+      'remember',
+      'recall_memories',
+      'forget_memory',
     ]);
     const cal = defs[0]!.input_schema as { properties: Record<string, unknown> };
     expect(Object.keys(cal.properties)).toContain('scope');

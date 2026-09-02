@@ -4,10 +4,12 @@ import type { Citation } from './citations.js';
 import { READ_TOOLS } from './read-tools.js';
 import { SETTLEMENT_TOOLS } from './settlement-tools.js';
 import { WRITE_TOOLS } from './write-tools.js';
+import { CREATE_TOOLS } from './create-tools.js';
+import { MEMORY_TOOLS } from './memory-tools.js';
 import type { ToolContext, ToolResult } from './types.js';
 
 /** The complete closed tool registry. Capability list = exactly this. */
-export const ALL_TOOLS = [...READ_TOOLS, ...SETTLEMENT_TOOLS, ...WRITE_TOOLS];
+export const ALL_TOOLS = [...READ_TOOLS, ...SETTLEMENT_TOOLS, ...WRITE_TOOLS, ...CREATE_TOOLS, ...MEMORY_TOOLS];
 
 /** Run a tool by name with validation + audit logging. */
 export async function runTool(ctx: ToolContext, name: string, params: unknown): Promise<ToolResult> {

@@ -29,31 +29,31 @@ All built and tested (53 tests green, `pnpm demo` prints the brief end-to-end):
 - [x] CI: typecheck + tests on every push.
 
 **Remaining Phase A (needs Adam):**
-- [ ] Set `ANTHROPIC_API_KEY` and run `pnpm eval` — first scored eval pass of the live model.
+- [x] Set `ANTHROPIC_API_KEY` and run `pnpm eval` — first scored eval pass of the live model. *(Done — 17 scored cases run on every change.)*
 - [ ] `pnpm dev` + chat with PAM against golden data; note anything that feels wrong before real data ever touches it.
 
 ## Phase B — Key arrives: Sprint 0 verification (days, not weeks)
 
-- [ ] Wire real credentials (staging first). Run the capability-verification script: auth + refresh, staff, matters, today's events/tasks, one matter's folder tree + an email file downloaded and parsed, `/search/files` for "settlement", webhook round-trip, `UserId` permission check, rate-limit behavior, deep-link URL probing.
-- [ ] Update [docs/02](02-smokeball-api.md) with every delta between the spec and reality; decide workarounds for any surprise.
+- [x] Wire real credentials (staging first). Run the capability-verification script: auth + refresh, staff, matters, today's events/tasks, one matter's folder tree + an email file downloaded and parsed, `/search/files` for "settlement", webhook round-trip, `UserId` permission check, rate-limit behavior, deep-link URL probing. *(Done Sept 2026 — staging connected (OAuth client-credentials, scopes granted, `/api/smokeball/verify` all green); deltas in docs/02.)*
+- [x] Update [docs/02](02-smokeball-api.md) with every delta between the spec and reality; decide workarounds for any surprise. *(Done — see docs/02 “Reality deltas”.)*
 - [ ] Seed the golden dataset into the staging account (Adam: ~an hour of clicking in the staging web app, or via API where writable).
 - **Gate:** capability matrix confirmed; mock's behavior corrected to match reality where they differ.
 
 ## Phase C — Sprints 1–2: read-only assistant on real data (~2–3 weeks)
 
-- [ ] Repoint sync at staging → then production account (read-only scopes).
+- [x] Repoint sync at staging → then production account (read-only scopes). *(Staging: done. Production: pending prod credentials.)*
 - [ ] Full matter search/reporting from cache; colleague + office calendars; conflict detection; daily brief with priority ordering.
-- [ ] Deploy to hosting under the subdomain, app login for Jeff (passkey/OTP).
+- [x] Deploy to hosting under the subdomain, app login for Jeff (passkey/OTP). *(Deployed on Render (pam-odwo.onrender.com, persistent disk, access-code login). Subdomain still open.)*
 - [ ] **Adam + Jeff: shadow validation** — 1–2 weeks of Jeff comparing PAM's morning brief against Smokeball; every discrepancy filed and fixed. **Gate: 10 consecutive clean briefs.**
 
 ## Phase D — Sprint 3: settlement intelligence (~1–2 weeks)
 
-- [ ] Folder/package detection (fuzzy naming from Jeff's interview data), email-file parsing, sent-verification, timelines with evidence, follow-up gap detection.
+- [x] Folder/package detection (fuzzy naming from Jeff's interview data), email-file parsing, sent-verification, timelines with evidence, follow-up gap detection. *(Done — settlement engine (memo parsing, sent-verification incl. Dropbox, liens, timelines).)*
 - [ ] **Gate:** zero false "sent" claims on golden data; Jeff spot-checks real PI matters.
 
 ## Phase E — Sprint 4: confirmed writes (~1–2 weeks)
 
-- [ ] Propose → confirm → execute → verify framework; event + task creation, task rescheduling with hard-deadline guard; audit trail UI.
+- [x] Propose → confirm → execute → verify framework; event + task creation, task rescheduling with hard-deadline guard; audit trail UI. *(Done — task reschedule (statute guard), task creation, event creation; single-use payload-bound tokens; audit trail; memory with code-enforced privilege guard + quiet extractor.)*
 - [ ] **Gate:** a week of real use, zero unintended writes; Smokeball security review passed (required for production app promotion — start the paperwork in Phase B).
 
 ## Phase F — Sprint 5: proactive PAM (~1 week)

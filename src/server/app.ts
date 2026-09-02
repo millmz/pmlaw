@@ -361,7 +361,75 @@ export function buildApp(deps: AppDeps): FastifyInstance {
 
   app.post('/api/chat/new', async () => {
     await ctx.db.update(schema.chatSessions).set({ closed: true }).where(eq(schema.chatSessions.staffId, ctx.currentStaffId));
+    // Quiet memory extraction runs in the background over what just closed.
+    if (deps.llm) {
+      const { extractMemoriesFromSession, pendingExtractions } = await import('./agent/extractor.js');
+      const llm = deps.llm;
+      void pendingExtractions(ctx.db, ctx.currentStaffId).then(async (ids) => {
+        for (const id of ids) {
+          const r = await extractMemoriesFromSession(ctx.db, llm, id);
+          if (r.proposed > 0) console.log(`[pam] memory extractor: session ${id} → saved ${r.saved}, refused ${r.refused}`);
+        }
+      });
+    }
     return { ok: true };
+  });
+
+  // ------------------------------------------------------------- memories
+  app.get('/api/memories', async () => {
+    const { listMemories } = await import('./tools/memory-tools.js');
+    return { memories: await listMemories(ctx.db, 200) };
+  });
+  app.delete<{ Params: { id: string } }>('/api/memories/:id', async (req, reply) => {
+    const rows = await ctx.db.select().from(schema.memories).where(eq(schema.memories.id, req.params.id));
+    if (rows.length === 0) return reply.code(404).send({ error: 'no such memory' });
+    await ctx.db.delete(schema.memories).where(eq(schema.memories.id, req.params.id));
+    await ctx.db.insert(schema.auditLog).values({
+      actor: ctx.currentStaffId,
+      action: 'memory:forget',
+      params: { id: req.params.id, hook: rows[0]!.hook, via: 'settings' },
+      result: 'deleted',
+    });
+    return { ok: true };
+  });
+
+  // ----------------------------------------------------------- seed (admin)
+  // Proves the write path end to end on a real tenant: one task due today +
+  // one 30-minute event tomorrow, both clearly labeled as safe to delete.
+  app.post('/api/smokeball/seed', async (_req, reply) => {
+    if (!ctx.smokeball) return reply.code(503).send({ error: 'no Smokeball client configured' });
+    const { appNow, FIRM_TZ } = await import('../core/dates.js');
+    const now = appNow(ctx.fixedNowIso).setZone(FIRM_TZ);
+    const stamp = now.toFormat('LLL d, h:mm a');
+    const task = await ctx.smokeball.createTask(
+      {
+        subject: `PAM test task (${stamp}) — safe to delete`,
+        assigneeIds: [ctx.currentStaffId],
+        dueDate: now.toISODate()!,
+        note: 'Created by PAM to prove the Smokeball write path. Delete freely.',
+      },
+      ctx.currentStaffId,
+    );
+    const start = now.plus({ days: 1 }).set({ hour: 10, minute: 0, second: 0, millisecond: 0 });
+    const event = await ctx.smokeball.createEvent({
+      subject: `PAM test event (${stamp}) — safe to delete`,
+      startTime: start.toISO()!,
+      endTime: start.plus({ minutes: 30 }).toISO()!,
+      timeZone: FIRM_TZ,
+      attendeeIds: [ctx.currentStaffId],
+      allDay: false,
+    });
+    await ctx.db.insert(schema.auditLog).values({
+      actor: ctx.currentStaffId,
+      action: 'write:seed',
+      params: { taskRequestId: task.requestId, eventRequestId: event.requestId },
+      result: 'submitted (async)',
+    });
+    return {
+      ok: true,
+      submitted: { task: task.requestId, event: event.requestId },
+      note: 'Smokeball applies writes asynchronously. Both entries appear in PAM after the next sync (about a minute) and in Smokeball itself right away.',
+    };
   });
 
   app.post('/api/chat/stream', async (req, reply) => {
