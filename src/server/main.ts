@@ -2,6 +2,8 @@ import { buildGoldenDataset, GOLDEN_ANCHOR_ISO } from '../core/golden.js';
 import { createMockSmokeball } from '../smokeball/mock/server.js';
 import { SmokeballClient } from '../smokeball/client.js';
 import { TokenManager, normalizeTokenUrl } from '../smokeball/auth.js';
+import { ensureWebhookSubscription } from '../smokeball/webhooks.js';
+import { randomBytes } from 'node:crypto';
 import { eq } from 'drizzle-orm';
 import { openDb, schema } from './db/index.js';
 import { SyncWorker, clearSyncedData } from './sync/worker.js';
@@ -144,10 +146,25 @@ async function main() {
   if (pamApiKey()) llm = await anthropicLlm();
   phase('llm ready');
 
+  // Webhook signing key: env wins; otherwise one is generated once and kept
+  // in app_settings so the subscription and the receiver always agree.
+  let webhookKey: string | undefined;
+  if (useReal) {
+    webhookKey = process.env['SMOKEBALL_WEBHOOK_KEY']?.trim() || undefined;
+    if (!webhookKey) {
+      const row = (await db.select().from(schema.appSettings).where(eq(schema.appSettings.key, 'webhook.key')).limit(1))[0];
+      webhookKey = row?.value;
+      if (!webhookKey) {
+        webhookKey = randomBytes(32).toString('hex');
+        await putSetting(db, 'webhook.key', webhookKey);
+      }
+    }
+  }
+
   // Bind the port BEFORE the first sync: a sync failure against the real API
   // must leave the server up (and /api/smokeball/verify reachable) rather
   // than crash-looping the deploy with no open port.
-  const app = buildApp({ ctx, worker, llm, accessCode: process.env['PAM_ACCESS_CODE'], dataPersistent: persistent });
+  const app = buildApp({ ctx, worker, llm, accessCode: process.env['PAM_ACCESS_CODE'], dataPersistent: persistent, webhookKey });
   phase('app built, binding port');
   const addr = await app.listen({ port: PORT, host: '0.0.0.0' });
   console.log(`[pam] serving at ${addr} (chat ${llm ? 'enabled' : 'DISABLED — no ANTHROPIC_API_KEY'})`);
@@ -169,6 +186,19 @@ async function main() {
       .then(async (c) => {
         console.log('[pam] synced:', c);
         await refreshStaff();
+        // Real-time updates: register (or reuse) PAM's webhook subscription.
+        const publicUrl = (process.env['PAM_PUBLIC_URL'] ?? process.env['RENDER_EXTERNAL_URL'])?.trim().replace(/\/+$/, '');
+        if (publicUrl && webhookKey) {
+          try {
+            const sub = await ensureWebhookSubscription(client, `${publicUrl}/webhooks/smokeball`, webhookKey);
+            console.log(`[pam] webhook subscription ${sub.created ? 'created' : 'reused'}: ${sub.id} → ${sub.url}`);
+            await putSetting(db, 'webhook.subscriptionId', sub.id);
+          } catch (e) {
+            console.error('[pam] webhook subscription failed (polling still runs every minute):', e instanceof Error ? e.message : e);
+          }
+        } else {
+          console.log('[pam] no public URL known (PAM_PUBLIC_URL / RENDER_EXTERNAL_URL) — webhooks not registered; polling only');
+        }
       })
       .catch((e) => console.error('[pam] full sync failed (server stays up; see /api/smokeball/verify):', e));
   } else {

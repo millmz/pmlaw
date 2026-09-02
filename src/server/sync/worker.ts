@@ -311,6 +311,35 @@ export class SyncWorker {
     return counts;
   }
 
+  private syncTimer: ReturnType<typeof setTimeout> | null = null;
+  /** Last webhook delivery seen, for diagnostics. */
+  lastWebhook: { at: string; type: string } | null = null;
+
+  /** Coalesce a burst of deliveries into one incremental sync shortly after. */
+  requestSync(delayMs = 300): void {
+    if (this.syncTimer) clearTimeout(this.syncTimer);
+    this.syncTimer = setTimeout(() => {
+      this.syncTimer = null;
+      this.incrementalSync().catch((e) => console.error('[pam] webhook-triggered sync failed:', e instanceof Error ? e.message : e));
+    }, delayMs);
+  }
+
+  /**
+   * Production path for a delivery: the payload is NOT trusted as a full
+   * record (real shapes vary by event) — deletions are applied by id, and
+   * everything else triggers a prompt incremental sync from the API.
+   */
+  async handleWebhook(type: string, payload: unknown): Promise<void> {
+    this.lastWebhook = { at: nowIso(), type };
+    const id = payload && typeof payload === 'object' ? (payload as { id?: unknown }).id : undefined;
+    if (/\.deleted$/.test(type) && typeof id === 'string') {
+      const table = type.startsWith('task.') ? schema.tasks : type.startsWith('memo.') ? schema.memos : type.startsWith('matter.') ? schema.matters : type.startsWith('event.') ? schema.events : null;
+      if (table) await this.db.delete(table).where(eq(table.id, id));
+      return;
+    }
+    this.requestSync();
+  }
+
   /** Apply a webhook delivery. Idempotent; unknown types are ignored. Payloads
    *  may arrive in the real wire shape — the adapter decodes either. */
   async applyWebhook(type: string, payload: unknown): Promise<void> {

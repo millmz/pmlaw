@@ -257,14 +257,15 @@ export class SmokeballClient {
   createWebhook(eventTypes: string[], callbackUrl: string, key = 'mock-webhook-key', name = 'PAM'): Promise<{ id: string; key: string }> {
     return this.request('POST', '/webhooks', { name, key, eventTypes, eventNotificationUrl: callbackUrl });
   }
-  /** Event type names as the API spells them — read before subscribing. */
+  /** Event type names as the API spells them (staging answers plain strings). */
   async listWebhookTypes(): Promise<string[]> {
-    const res = await this.get<{ value?: Raw[] } | Raw[]>('/webhooks/types');
+    const res = await this.get<{ value?: (Raw | string)[] } | (Raw | string)[]>('/webhooks/types');
     const raws = Array.isArray(res) ? res : (res.value ?? []);
-    return raws.map((r) => String(r['id'] ?? r['name'] ?? r['type'] ?? JSON.stringify(r)));
+    return raws.map((r) => (typeof r === 'string' ? r : String(r['id'] ?? r['name'] ?? r['type'] ?? JSON.stringify(r))));
   }
-  listWebhooks(): Promise<{ value: { id: string }[] }> {
-    return this.get('/webhooks');
+  async listWebhooks(): Promise<{ value: Raw[] }> {
+    const res = await this.get<{ value?: Raw[] } | Raw[]>('/webhooks');
+    return { value: Array.isArray(res) ? res : (res.value ?? []) };
   }
   deleteWebhook(id: string): Promise<unknown> {
     return this.request('DELETE', `/webhooks/${id}`);

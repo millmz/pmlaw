@@ -27,6 +27,8 @@ export interface AppDeps {
   accessCode?: string | undefined;
   /** False when the DB fell back to memory (persistent disk missing). */
   dataPersistent?: boolean | undefined;
+  /** Signing key registered with Smokeball; when set, deliveries must verify. */
+  webhookKey?: string | undefined;
 }
 
 const SESSION_COOKIE = 'pam_session';
@@ -330,6 +332,7 @@ export function buildApp(deps: AppDeps): FastifyInstance {
           ? 'IN MEMORY — persistent disk missing; settings/chat are lost on restart. Add a disk mounted at /var/data.'
           : 'persistent disk',
       lastSync: worker.lastSync ?? 'no sync attempted yet',
+      lastWebhook: worker.lastWebhook ?? 'none received yet',
       mode: process.env['SMOKEBALL_BASE_URL'] ? 'REAL Smokeball' : 'mock (golden data)',
       baseUrl: process.env['SMOKEBALL_BASE_URL'] ?? '(mock)',
       auth:
@@ -552,7 +555,7 @@ export function buildApp(deps: AppDeps): FastifyInstance {
   // (docs/02). Verified whenever SMOKEBALL_WEBHOOK_KEY is set; the mock path
   // in tests runs unkeyed.
   app.post('/webhooks/smokeball', async (req, reply) => {
-    const key = process.env['SMOKEBALL_WEBHOOK_KEY']?.trim();
+    const key = deps.webhookKey ?? process.env['SMOKEBALL_WEBHOOK_KEY']?.trim();
     if (key) {
       const { createHmac, timingSafeEqual } = await import('node:crypto');
       const h = req.headers;
@@ -561,11 +564,17 @@ export function buildApp(deps: AppDeps): FastifyInstance {
         .update(`${String(h['timestamp'] ?? '')}|${String(h['requestid'] ?? '')}|${process.env['SMOKEBALL_CLIENT_ID']?.trim() ?? ''}`)
         .digest('hex');
       const ok = sig.length === expected.length && timingSafeEqual(Buffer.from(sig), Buffer.from(expected));
-      if (!ok) return reply.code(401).send({ error: 'bad signature' });
+      if (!ok) {
+        console.error(`[pam] webhook signature rejected (type=${String((req.body as { type?: unknown })?.type ?? '?')})`);
+        return reply.code(401).send({ error: 'bad signature' });
+      }
     }
-    const { type, payload } = req.body as { type: string; payload: unknown };
+    // Defensive parse — field names vary between the mock and live deliveries.
+    const b = (req.body ?? {}) as Record<string, unknown>;
+    const type = String(b['type'] ?? b['eventType'] ?? '');
+    const payload = b['payload'] ?? b['data'] ?? b;
     if (type === 'error') console.error('[pam] smokeball rejected a write:', JSON.stringify(payload).slice(0, 400));
-    else await worker.applyWebhook(type, payload);
+    else if (type) await worker.handleWebhook(type, payload);
     return {};
   });
 

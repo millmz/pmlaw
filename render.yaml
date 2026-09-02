@@ -48,7 +48,9 @@ services:
         sync: false
       - key: SMOKEBALL_SCOPE
         sync: false
-      # Set when a webhook subscription is registered with this key: PAM then
-      # verifies the HMAC signature on every delivery to /webhooks/smokeball.
+      # Webhooks register themselves at boot using RENDER_EXTERNAL_URL and a
+      # signing key PAM generates and stores on the disk. Optional overrides:
       - key: SMOKEBALL_WEBHOOK_KEY
+        sync: false
+      - key: PAM_PUBLIC_URL
         sync: false
