@@ -62,7 +62,16 @@ export function buildApp(deps: AppDeps): FastifyInstance {
     if (!authed(req)) return reply.code(401).send({ error: 'authentication required' });
   });
 
-  app.get('/healthz', async () => ({ ok: true }));
+  app.get('/healthz', async () => ({
+    ok: true,
+    commit: (process.env['RENDER_GIT_COMMIT'] ?? 'dev').slice(0, 10),
+    web: existsSync(join(dirname(fileURLToPath(import.meta.url)), '..', '..', 'dist', 'web', 'index.html'))
+      ? 'built'
+      : 'MISSING',
+    storage: deps.dataPersistent === false ? 'IN MEMORY' : 'persistent',
+    mode: process.env['SMOKEBALL_BASE_URL'] ? 'real' : 'mock',
+    uptimeSec: Math.round(process.uptime()),
+  }));
 
   // ------------------------------------------------------------------ auth
   app.post('/api/login', async (req, reply) => {
@@ -418,27 +427,31 @@ export function buildApp(deps: AppDeps): FastifyInstance {
   });
 
   // ------------------------------------------------------------- static SPA
+  // Serving is resolved per REQUEST, not per boot: a page URL can never get a
+  // bare JSON 404. Missing bundle → a plain-words 503 explainer; unknown API
+  // route → a 404 that names the path and method so screenshots self-diagnose.
   const webDist = join(dirname(fileURLToPath(import.meta.url)), '..', '..', 'dist', 'web');
+  const haveIndex = () => existsSync(join(webDist, 'index.html'));
+  const explainer =
+    '<h1 style="font-family:Georgia,serif">PAM — server is up, but the web app bundle is missing</h1>' +
+    '<p style="font-family:system-ui">The deploy needs its build step to run <code>pnpm build</code> ' +
+    '(see render.yaml), or the build did not upload. This page is served by the API server itself, ' +
+    'so the service and its data are fine — only the UI files are absent.</p>';
   if (existsSync(webDist)) {
-    void app.register(fastifyStatic, { root: webDist, wildcard: false });
-    // SPA fallback: any non-API GET serves index.html so client routing works.
-    app.setNotFoundHandler((req, reply) => {
-      if (req.method === 'GET' && !req.url.startsWith('/api/')) {
-        return reply.sendFile('index.html');
-      }
-      return reply.code(404).send({ error: 'not found' });
-    });
+    void app.register(fastifyStatic, { root: webDist });
   } else {
-    // The UI bundle wasn't built. Say so plainly instead of a mystery 404.
     console.error(`[pam] WARNING: web UI not found at ${webDist} — run "pnpm build"`);
-    app.get('/', async (_req, reply) =>
-      reply.code(503).type('text/html').send(
-        '<h1 style="font-family:Georgia,serif">PAM — server is up, but the web app was not built</h1>' +
-          '<p style="font-family:system-ui">The deploy needs its build step to run <code>pnpm build</code>. ' +
-          'Check that the build command includes it (see render.yaml).</p>',
-      ),
-    );
   }
+  app.setNotFoundHandler((req, reply) => {
+    const isPage = req.method === 'GET' && !req.url.startsWith('/api/') && !req.url.startsWith('/webhooks/');
+    if (isPage) {
+      if (haveIndex()) return reply.sendFile('index.html');
+      return reply.code(503).type('text/html').send(explainer);
+    }
+    return reply
+      .code(404)
+      .send({ error: 'not found', method: req.method, path: req.url.split('?')[0], hint: 'The web app lives at /' });
+  });
 
   // ---------------------------------------------------------------- webhook
   app.post('/webhooks/smokeball', async (req) => {
