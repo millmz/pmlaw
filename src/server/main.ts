@@ -11,7 +11,7 @@ import { normalizeBaseUrl, withTimeout } from './boot.js';
 import { resolveCurrentStaffId } from './staff.js';
 import type { ToolContext } from './tools/types.js';
 import { buildApp } from './app.js';
-import { rename } from 'node:fs/promises';
+import { mkdir, rename } from 'node:fs/promises';
 
 /**
  * PAM entrypoint. Boots against the mock Smokeball with golden data (default)
@@ -26,24 +26,44 @@ process.on('unhandledRejection', (e) => console.error('[pam] unhandled rejection
 process.on('uncaughtException', (e) => console.error('[pam] uncaught exception:', e));
 
 /**
- * Open the database, surviving a data dir wedged by an earlier crash loop:
- * if the open (including migrations) stalls or fails, the directory is moved
- * aside — preserved for inspection, never deleted — and a fresh one is
- * created. The mirror rebuilds on the next sync; only unsaved local edits to
- * settings/chat since the last good boot would be lost.
+ * Open the database with graceful degradation, never a crash loop:
+ *  1. No PAM_DATA_DIR → in-memory (dev/tests).
+ *  2. The dir's parent isn't writable (persistent disk missing/unmounted) →
+ *     LOUD warning + in-memory, so the site stays up while the disk is fixed.
+ *  3. Open stalls or fails on an existing dir (wedged by a crash) → move it
+ *     aside (preserved, never deleted) and start fresh on the same path.
+ *  4. Even the fresh open fails → warn + in-memory.
+ * `persistent: false` is surfaced in /api/smokeball/verify.
  */
 async function openDbResilient(dataDir: string | undefined) {
-  if (!dataDir) return openDb();
+  const inMemory = async (why: string) => {
+    console.error(`[pam] boot: ${why}`);
+    console.error(
+      '[pam] boot: RUNNING IN MEMORY — settings, chat history, and the audit log will NOT survive a restart. ' +
+        'Fix the persistent disk (Render → service → Disks → mount path /var/data), then redeploy.',
+    );
+    return { ...(await openDb()), persistent: false };
+  };
+  if (!dataDir) return { ...(await openDb()), persistent: false };
+  try {
+    await mkdir(dataDir, { recursive: true });
+  } catch (e) {
+    return inMemory(`cannot create ${dataDir} (${String(e instanceof Error ? e.message : e)}) — no writable disk at that path.`);
+  }
   try {
     // A real recovery on Render's disk was observed at ~29s — the margin
     // must comfortably clear that, since losing the race renames the dir.
-    return await withTimeout(openDb(dataDir), 120_000, `database open at ${dataDir}`);
+    return { ...(await withTimeout(openDb(dataDir), 120_000, `database open at ${dataDir}`)), persistent: true };
   } catch (e) {
     const backup = `${dataDir}.wedged-${new Date().toISOString().replace(/[:.]/g, '-')}`;
     console.error(`[pam] boot: ${String(e instanceof Error ? e.message : e)}`);
     console.error(`[pam] boot: moving the data dir to ${backup} and starting fresh — synced data rebuilds on the next sync`);
-    await rename(dataDir, backup);
-    return openDb(dataDir);
+    try {
+      await rename(dataDir, backup);
+      return { ...(await openDb(dataDir)), persistent: true };
+    } catch (e2) {
+      return inMemory(`fresh start at ${dataDir} also failed (${String(e2 instanceof Error ? e2.message : e2)}).`);
+    }
   }
 }
 
@@ -91,8 +111,8 @@ async function main() {
   // PAM_DATA_DIR (a persistent disk in production) makes sessions, memories,
   // and Jeff's identity edits survive restarts; unset = in-memory (dev/tests).
   phase('opening database');
-  const { db, close: closeDb } = await openDbResilient(process.env['PAM_DATA_DIR']);
-  phase('database open');
+  const { db, close: closeDb, persistent } = await openDbResilient(process.env['PAM_DATA_DIR']);
+  phase(`database open (${persistent ? 'persistent disk' : 'IN MEMORY'})`);
   await ensureKnowledgeAdditions(db); // one-shot: teach an existing DB who Jeff is
 
   // Source-change guard: sync only upserts, so switching data sources (mock →
@@ -127,7 +147,7 @@ async function main() {
   // Bind the port BEFORE the first sync: a sync failure against the real API
   // must leave the server up (and /api/smokeball/verify reachable) rather
   // than crash-looping the deploy with no open port.
-  const app = buildApp({ ctx, worker, llm, accessCode: process.env['PAM_ACCESS_CODE'] });
+  const app = buildApp({ ctx, worker, llm, accessCode: process.env['PAM_ACCESS_CODE'], dataPersistent: persistent });
   phase('app built, binding port');
   const addr = await app.listen({ port: PORT, host: '0.0.0.0' });
   console.log(`[pam] serving at ${addr} (chat ${llm ? 'enabled' : 'DISABLED — no ANTHROPIC_API_KEY'})`);

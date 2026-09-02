@@ -25,6 +25,8 @@ export interface AppDeps {
   llm?: LlmClient | undefined;
   /** When set, /api/* requires a session cookie obtained via /api/login. */
   accessCode?: string | undefined;
+  /** False when the DB fell back to memory (persistent disk missing). */
+  dataPersistent?: boolean | undefined;
 }
 
 const SESSION_COOKIE = 'pam_session';
@@ -301,6 +303,10 @@ export function buildApp(deps: AppDeps): FastifyInstance {
     await run('events', async () => `${(await sb.listEvents()).length} events`);
     const allOk = Object.values(checks).every((c) => c.ok);
     return {
+      storage:
+        deps.dataPersistent === false
+          ? 'IN MEMORY — persistent disk missing; settings/chat are lost on restart. Add a disk mounted at /var/data.'
+          : 'persistent disk',
       lastSync: worker.lastSync ?? 'no sync attempted yet',
       mode: process.env['SMOKEBALL_BASE_URL'] ? 'REAL Smokeball' : 'mock (golden data)',
       baseUrl: process.env['SMOKEBALL_BASE_URL'] ?? '(mock)',
