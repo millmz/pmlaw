@@ -1,4 +1,5 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { DateTime } from 'luxon';
 import { buildGoldenDataset, GOLDEN_ANCHOR_ISO } from '../../core/golden.js';
 import { createMockSmokeball, type MockSmokeball } from '../../smokeball/mock/server.js';
 import { SmokeballClient } from '../../smokeball/client.js';
@@ -28,6 +29,59 @@ beforeAll(async () => {
 afterAll(async () => {
   await mock.close();
   await closeDb();
+});
+
+describe('memo dates the way the office writes them', () => {
+  it('normalizes slash dates, two-digit years, month names, and ordinals', () => {
+    const now = DateTime.fromISO('2026-07-27T08:00:00', { zone: 'America/New_York' });
+    const cases: [string, string][] = [
+      ['Offer: $110,000 made 7/21/26 by Kevin Boland.', '2026-07-21'],
+      ['Offer: $110,000 made 7/21/2026 by Kevin Boland.', '2026-07-21'],
+      ['Offer: $110,000 made on July 21, 2026 by Kevin Boland', '2026-07-21'],
+      ['Offer: $110,000 made Jul 21st by Kevin Boland.', '2026-07-21'],
+      ['Offer: $85,000 made 2026-07-24 by Dana Whitcomb.', '2026-07-24'],
+    ];
+    for (const [text, iso] of cases) {
+      const f = parseMemoFacts([{ id: 'x', text }], now);
+      expect(f.offerDate, text).toBe(iso);
+      expect(f.offerBy, text).toMatch(/Kevin Boland|Dana Whitcomb/);
+    }
+  });
+});
+
+describe('analysis cache (production scale)', () => {
+  it('reuses the analysis while nothing changed and recomputes after a memo edit', async () => {
+    const { clearSettlementCache } = await import('./engine.js');
+    clearSettlementCache();
+    let downloads = 0;
+    const counting = new Proxy(client, {
+      get(target, prop, recv) {
+        if (prop === 'downloadFile') {
+          return async (...args: [string, string]) => {
+            downloads++;
+            return target.downloadFile(...args);
+          };
+        }
+        return Reflect.get(target, prop, recv) as unknown;
+      },
+    }) as typeof client;
+    const a = await analyzeMatter(db, counting, 'm-grasso', GOLDEN_ANCHOR_ISO);
+    const after1 = downloads;
+    expect(after1).toBeGreaterThan(0);
+    const b = await analyzeMatter(db, counting, 'm-grasso', GOLDEN_ANCHOR_ISO);
+    expect(downloads).toBe(after1); // cache hit: zero API calls
+    expect(b).toBe(a);
+    // A touched memo invalidates exactly this matter.
+    const { eq } = await import('drizzle-orm');
+    const { schema } = await import('../db/index.js');
+    const memo = (await db.select().from(schema.memos).where(eq(schema.memos.matterId, 'm-grasso')))[0]!;
+    await db.update(schema.memos).set({ updatedAt: '2026-07-26T12:00:00.000Z' }).where(eq(schema.memos.id, memo.id));
+    await analyzeMatter(db, counting, 'm-grasso', GOLDEN_ANCHOR_ISO);
+    expect(downloads).toBeGreaterThan(after1);
+    // Restore so the ranking tests below see the golden timestamps.
+    await db.update(schema.memos).set({ updatedAt: memo.updatedAt }).where(eq(schema.memos.id, memo.id));
+    clearSettlementCache();
+  });
 });
 
 describe('memo fact parsing (Jeff’s real note patterns)', () => {

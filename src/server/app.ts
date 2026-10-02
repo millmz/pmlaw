@@ -293,6 +293,35 @@ export function buildApp(deps: AppDeps): FastifyInstance {
     return { ok: true, counts };
   });
 
+  // Shape-only sample of what the REAL tenant sends — field names and types,
+  // never values — so custom-field keys (statute date, date of loss) can be
+  // mapped from a paste without exposing client data.
+  app.get('/api/smokeball/inspect', async (_req, reply) => {
+    if (!ctx.smokeball) return reply.code(503).send({ error: 'no Smokeball client configured' });
+    const { shapeOf } = await import('./inspect.js');
+    const sb = ctx.smokeball;
+    const out: Record<string, unknown> = {};
+    const probe = async (name: string, fn: () => Promise<unknown>) => {
+      try {
+        out[name] = shapeOf(await fn());
+      } catch (e) {
+        out[name] = `unavailable: ${String(e instanceof Error ? e.message : e).slice(0, 160)}`;
+      }
+    };
+    await probe('matter', () => sb.rawFirst('/matters'));
+    await probe('task', () => sb.rawFirst('/tasks'));
+    await probe('event', () => sb.rawFirst('/events'));
+    await probe('staff', () => sb.rawFirst('/staff'));
+    const firstMatter = (await sb.rawFirst('/matters').catch(() => null)) as { id?: string } | null;
+    if (firstMatter?.id) {
+      const id = firstMatter.id;
+      await probe('memo', () => sb.rawFirst(`/matters/${id}/memos`));
+      await probe('file', () => sb.rawFirst(`/matters/${id}/documents/files`));
+      await probe('folders', () => sb.rawFirst(`/matters/${id}/documents/folders`));
+    }
+    return { note: 'Field names and types only — no values. Paste this to map custom fields.', shapes: out };
+  });
+
   // Connection check for the real Smokeball cutover: auth + a read from each
   // core resource, each reported independently. Shapes and counts only —
   // never credential values. Open /api/smokeball/verify in the browser.

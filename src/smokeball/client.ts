@@ -155,6 +155,13 @@ export class SmokeballClient {
     return xs.filter((x): x is T => x !== null);
   }
 
+  /** First raw record of a paged endpoint, un-adapted — for /inspect only. */
+  async rawFirst(path: string): Promise<Raw | null> {
+    const sep = path.includes('?') ? '&' : '?';
+    const res = await this.get<Paged<Raw>>(`${path}${sep}limit=1&offset=0`);
+    return res.value?.[0] ?? null;
+  }
+
   async listStaff(): Promise<Staff[]> {
     const raws = await this.getAll<Raw>('/staff');
     for (const r of raws) {

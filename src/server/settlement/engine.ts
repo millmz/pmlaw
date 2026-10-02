@@ -1,6 +1,6 @@
 import { eq } from 'drizzle-orm';
 import { DateTime } from 'luxon';
-import { classifyTask } from '../../core/dates.js';
+import { classifyTask, FIRM_TZ } from '../../core/dates.js';
 import type { SmokeballClient } from '../../smokeball/client.js';
 import { schema, type Db } from '../db/index.js';
 import type { Citation } from '../tools/citations.js';
@@ -72,7 +72,31 @@ const grab = (text: string, re: RegExp): string | undefined => {
   return m?.[1]?.trim().replace(/[.,\s]+$/, '');
 };
 
-export function parseMemoFacts(memoTexts: { id: string; text: string }[]): SettlementFacts {
+/**
+ * Dates the way the office actually writes them — "2026-07-21", "7/21/26",
+ * "7/21/2026", "July 21, 2026", "Jul 21" — normalized to ISO. Two-digit years
+ * are 20xx; a month-day with no year takes the current year.
+ */
+export function normalizeMemoDate(raw: string, now: DateTime = DateTime.now()): string | undefined {
+  const s = raw.trim().replace(/(\d)(st|nd|rd|th)\b/gi, '$1');
+  const iso = DateTime.fromISO(s, { zone: FIRM_TZ });
+  if (/^\d{4}-\d{2}-\d{2}/.test(s) && iso.isValid) return iso.toISODate()!;
+  const slash = s.match(/^(\d{1,2})[/-](\d{1,2})(?:[/-](\d{2,4}))?$/);
+  if (slash) {
+    const y = slash[3] ? (slash[3].length === 2 ? 2000 + Number(slash[3]) : Number(slash[3])) : now.year;
+    const d = DateTime.fromObject({ year: y, month: Number(slash[1]), day: Number(slash[2]) }, { zone: FIRM_TZ });
+    return d.isValid ? d.toISODate()! : undefined;
+  }
+  for (const fmt of ['MMMM d, yyyy', 'MMMM d yyyy', 'MMM d, yyyy', 'MMM d yyyy', 'MMMM d', 'MMM d']) {
+    const d = DateTime.fromFormat(s, fmt, { zone: FIRM_TZ });
+    if (d.isValid) return (fmt.includes('yyyy') ? d : d.set({ year: now.year })).toISODate()!;
+  }
+  return undefined;
+}
+
+const DATE_TOKEN = String.raw`(\d{4}-\d{2}-\d{2}|\d{1,2}[/-]\d{1,2}(?:[/-]\d{2,4})?|(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Sept|Oct|Nov|Dec)[a-z]*\.? \d{1,2}(?:st|nd|rd|th)?(?:,? \d{4})?)`;
+
+export function parseMemoFacts(memoTexts: { id: string; text: string }[], now?: DateTime): SettlementFacts {
   const facts: SettlementFacts = { sourceMemoIds: [] };
   for (const memo of memoTexts) {
     const t = memo.text;
@@ -92,8 +116,15 @@ export function parseMemoFacts(memoTexts: { id: string; text: string }[]): Settl
     take('adjusterPhone', /Adjuster:[^\n]*?(\(\d{3}\)\s?\d{3}[-.]\d{4})/i);
     take('demand', /Demand:\s*(\$[\d,]+)/i);
     take('offer', /Offer:\s*(\$[\d,]+)/i);
-    take('offerDate', /Offer:[^.\n]*?made\s+(\d{4}-\d{2}-\d{2})/i);
-    take('offerBy', /Offer:[^.\n]*?by\s+([^—\-.\n]+)/i);
+    {
+      const raw = grab(t, new RegExp(String.raw`Offer:[^\n]*?made\s+(?:on\s+)?${DATE_TOKEN}`, 'i'));
+      const norm = raw ? normalizeMemoDate(raw, now) : undefined;
+      if (norm) {
+        facts.offerDate = norm;
+        used = true;
+      }
+    }
+    take('offerBy', /Offer:[^\n]*?\bby\s+([^—\-.\n(]+)/i);
     take('defenseCounsel', /Defense counsel:\s*([^\n(]+)/i); // names contain periods ("R. Calloway"); stop at phone paren
     if (used) facts.sourceMemoIds.push(memo.id);
   }
@@ -104,6 +135,23 @@ export function parseMemoFacts(memoTexts: { id: string; text: string }[]): Settl
 const SENT_MARKERS = [/attachment:?\s*settlement package/i, /dropbox\.com/i, /wetransfer\.com/i, /sharefile/i];
 const PACKAGE_RE = /settlement\s*package/i;
 const LIEN_AMOUNT_RE = /\$\s?([\d,]+(?:\.\d{2})?)/;
+/** Only emails whose NAME suggests settlement traffic get their bodies
+ *  downloaded — a real matter holds hundreds of emails and each download is
+ *  a rate-limited API call. Everything else is judged on metadata. */
+const EMAIL_WORTH_DOWNLOADING = /settlement|package|demand|offer|adjuster|claim|dropbox|wetransfer|sharefile|re:\s*.*(settle|offer)/i;
+const MAX_EMAIL_DOWNLOADS_PER_MATTER = 12;
+
+/**
+ * Per-matter analysis cache. A real board walks dozens of matters and each
+ * walk downloads files; recomputing on every page load would be minutes of
+ * API time. The key is the freshness of every record the analysis reads plus
+ * the calendar day (follow-up state depends on "today"), so a sync that
+ * touches a matter — or a new day — invalidates exactly that matter.
+ */
+const analysisCache = new Map<string, { key: string; summary: SettlementSummary | null }>();
+export function clearSettlementCache(): void {
+  analysisCache.clear();
+}
 
 export async function analyzeMatter(
   db: Db,
@@ -129,11 +177,47 @@ export async function analyzeMatter(
     return s ? `${s.firstName} ${s.lastName}` : id;
   };
 
+  const cacheKey = [
+    matter.updatedAt,
+    now.toISODate(),
+    ...memos.map((m) => `${m.id}:${m.updatedAt}`),
+    ...files.map((f) => `${f.id}:${f.dateModified}`),
+    ...tasks.map((t) => `${t.id}:${t.updatedAt}`),
+    ...events.map((e) => `${e.id}:${e.updatedAt}`),
+    folders.length,
+  ].join('|');
+  const hit = analysisCache.get(matterId);
+  if (hit && hit.key === cacheKey) return hit.summary;
+  const summary = await analyzeMatterUncached(
+    { db, client, matter, label, now, events, memos, folders, files, tasks, staffName },
+  );
+  analysisCache.set(matterId, { key: cacheKey, summary });
+  return summary;
+}
+
+interface AnalysisInputs {
+  db: Db;
+  client: SmokeballClient;
+  matter: typeof schema.matters.$inferSelect;
+  label: string;
+  now: DateTime;
+  events: (typeof schema.events.$inferSelect)[];
+  memos: (typeof schema.memos.$inferSelect)[];
+  folders: (typeof schema.folders.$inferSelect)[];
+  files: (typeof schema.files.$inferSelect)[];
+  tasks: (typeof schema.tasks.$inferSelect)[];
+  staffName: (id: string) => string;
+}
+
+async function analyzeMatterUncached(a: AnalysisInputs): Promise<SettlementSummary | null> {
+  const { client, matter, label, now, events, memos, folders, files, tasks, staffName } = a;
+  const matterId = matter.id;
+
   const timeline: TimelineEntry[] = [];
   const citations: Citation[] = [];
 
   // 1. Facts from notes — Jeff's source of truth.
-  const facts = parseMemoFacts(memos.map((m) => ({ id: m.id, text: m.text })));
+  const facts = parseMemoFacts(memos.map((m) => ({ id: m.id, text: m.text })), now);
   for (const id of facts.sourceMemoIds) {
     const memo = memos.find((m) => m.id === id)!;
     citations.push(cite('memo', id, `${label} — Note by ${staffName(memo.updatedById)}`));
@@ -154,18 +238,24 @@ export async function analyzeMatter(
     citations.push(cite('file', pkgDoc.id, `${label} — ${pkgDoc.name}`));
   }
 
-  // 3. Sent verification — email evidence ONLY, downloading candidate bodies.
+  // 3. Sent verification — email evidence ONLY. Bodies are downloaded only
+  // for emails whose name suggests settlement traffic (rate-limited calls);
+  // the rest are judged on name + metadata.
   let sentDate: string | undefined;
   let sentTo: string | undefined;
   let acknowledged = false;
   const emailFiles = files.filter((f) => f.emailFrom !== null);
+  let downloads = 0;
   for (const email of emailFiles.sort((a, b) => a.dateCreated.localeCompare(b.dateCreated))) {
     const fromFirm = (email.emailFrom ?? '').includes('pmlawny.com');
     let body = '';
-    try {
-      body = await client.downloadFile(matterId, email.id);
-    } catch {
-      // metadata-only is still usable
+    if (EMAIL_WORTH_DOWNLOADING.test(email.name) && downloads < MAX_EMAIL_DOWNLOADS_PER_MATTER) {
+      downloads++;
+      try {
+        body = await client.downloadFile(matterId, email.id);
+      } catch {
+        // metadata-only is still usable
+      }
     }
     const mentionsPackage = PACKAGE_RE.test(email.name) || PACKAGE_RE.test(body);
     if (fromFirm && !sentDate && mentionsPackage && SENT_MARKERS.some((re) => re.test(body))) {

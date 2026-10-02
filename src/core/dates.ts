@@ -67,6 +67,29 @@ export function isStatuteReminder(subject: string): boolean {
   return STATUTE_PATTERNS.some((p) => p.test(subject));
 }
 
+/**
+ * Court appearances by title/location. The real Smokeball API carries no
+ * "office calendar" flag, so the court list falls back to this reading of the
+ * event itself: courthouses, judges, hearings, trials, conferences, arraignments.
+ */
+const COURT_PATTERNS: RegExp[] = [
+  /\bcourt\b/i,
+  /\bjudge\b/i,
+  /\bhearing\b/i,
+  /\btrial\b/i,
+  /\barraign/i,
+  /\bsentenc/i,
+  /\bconference\b/i,
+  /\bmotion\b/i,
+  /\bappearance\b/i,
+  /\bcalendar call\b/i,
+  /\bpart \d+\b/i, // "Part 12" — NY Supreme Court parts
+];
+export function looksLikeCourt(subject: string, location?: string | null): boolean {
+  const hay = `${subject} ${location ?? ''}`;
+  return COURT_PATTERNS.some((p) => p.test(hay));
+}
+
 /** Split tasks Jeff-style: statute reminders are expected to sit in overdue. */
 export function splitOverdue<T extends { subject: string }>(
   overdueTasks: T[],

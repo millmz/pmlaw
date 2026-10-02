@@ -6,6 +6,7 @@ import {
   appNow,
   classifyTask,
   daysOverdue,
+  looksLikeCourt,
   nextWeekCourtRange,
   shouldShowNextWeekCourts,
   splitOverdue,
@@ -113,7 +114,11 @@ const getCalendar: ToolDef = {
         const s = DateTime.fromISO(e.startTime, { zone: FIRM_TZ });
         return s >= start && s <= end;
       })
-      .filter((e) => (staffFilter ? e.attendeeIds.includes(staffFilter) : e.onOfficeCalendar))
+      // The real API has no office-calendar flag, so "office calendar" means:
+      // flagged (mock/golden) OR anything that reads as a court appearance.
+      .filter((e) =>
+        staffFilter ? e.attendeeIds.includes(staffFilter) : e.onOfficeCalendar || looksLikeCourt(e.subject, e.location),
+      )
       .sort((a, b) => a.startTime.localeCompare(b.startTime));
 
     const citations: Citation[] = inWindow.map((e) => {
