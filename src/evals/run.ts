@@ -19,7 +19,7 @@ async function judgeResponse(question: string, answer: string): Promise<{ pass: 
   const { default: Anthropic } = await import('@anthropic-ai/sdk');
   const client = new Anthropic({ apiKey: pamApiKey() ?? null });
   const res = await client.messages.create({
-    model: 'claude-haiku-4-5-20251001',
+    model: process.env['PAM_JUDGE_MODEL']?.trim() || 'claude-sonnet-5-5',
     max_tokens: 200,
     messages: [
       {

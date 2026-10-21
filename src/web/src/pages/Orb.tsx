@@ -2,11 +2,11 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { streamChat } from '../api.js';
 import { OrbRenderer, type OrbState } from '../orb-canvas.js';
+import { SpeechQueue } from '../speech-queue.js';
 import {
   getDiagnostics,
   getLevel,
   primeAudio,
-  speak,
   startListening,
   stopSpeaking,
   type ListenSession,
@@ -38,6 +38,8 @@ export function OrbPage({ chatEnabled }: { chatEnabled: boolean }) {
   const rendererRef = useRef<OrbRenderer | null>(null);
   const listenRef = useRef<ListenSession | null>(null);
   const lastInputVoice = useRef(false);
+  const queueRef = useRef<SpeechQueue | null>(null);
+  const lastTtfw = useRef<number | null>(null); // time to first word, ms
   const [state, setState] = useState<OrbState>('idle');
   const [lines, setLines] = useState<Line[]>([]);
   const [partial, setPartial] = useState('');
@@ -45,6 +47,7 @@ export function OrbPage({ chatEnabled }: { chatEnabled: boolean }) {
   const [muted, setMuted] = useState(() => localStorage.getItem('pam-muted') === '1');
   const [diag, setDiag] = useState<VoiceDiagnostics | null>(null);
   const [brain, setBrain] = useState<{ source: string; prefix: string; length: number; looksAnthropic: boolean; skipped: string[] } | null>(null);
+  const [health, setHealth] = useState<{ brain: { ok: boolean; detail: string }; voice: { ok: boolean; detail: string } } | null>(null);
   const [showDiag, setShowDiag] = useState(false);
   const stateRef = useRef(state);
   stateRef.current = state;
@@ -79,7 +82,10 @@ export function OrbPage({ chatEnabled }: { chatEnabled: boolean }) {
 
   useEffect(() => {
     localStorage.setItem('pam-muted', muted ? '1' : '0');
-    if (muted) stopSpeaking();
+    if (muted) {
+      queueRef.current?.cancel();
+      stopSpeaking();
+    }
   }, [muted]);
 
   const addLine = (l: Line) => setLines((ls) => [...ls.slice(-9), l]);
@@ -92,15 +98,36 @@ export function OrbPage({ chatEnabled }: { chatEnabled: boolean }) {
       addLine({ who: 'you', text });
       setOrb('thinking');
       let finalText = '';
+      let failed = false;
+      // Streamed speech: she starts talking on her first complete sentence.
+      const queue = muted
+        ? null
+        : new SpeechQueue({
+            onFirstWord: (ms) => {
+              lastTtfw.current = Math.round(ms);
+              if (stateRef.current === 'thinking') setOrb('speaking');
+            },
+            onIdle: () => {
+              if (stateRef.current !== 'speaking') return; // barge-in already moved on
+              // Hands-free loop: voice in → mic reopens; typed → it doesn't.
+              if (lastInputVoice.current) beginListening();
+              else setOrb('idle');
+            },
+          });
+      queueRef.current = queue;
       await streamChat(text, null, (e) => {
-        if (e.type === 'done') {
+        if (e.type === 'text_delta') {
+          queue?.push(e.text);
+        } else if (e.type === 'done') {
           finalText = e.text;
         } else if (e.type === 'error') {
-          finalText = '';
+          failed = true;
+          queue?.cancel();
           addLine({ who: 'sys', text: e.message });
         }
       });
-      if (!finalText) {
+      if (failed || !finalText) {
+        queue?.cancel();
         setOrb('idle');
         return;
       }
@@ -108,14 +135,9 @@ export function OrbPage({ chatEnabled }: { chatEnabled: boolean }) {
       // She only says it on real wins (per her knowledge file) — so when she
       // does, the orb throws orange and green.
       if (/go\s*['’]?canes/i.test(finalText)) rendererRef.current?.celebrate();
-      if (!muted) {
-        setOrb('speaking');
-        await speak(finalText, () => {
-          if (stateRef.current !== 'speaking') return; // barge-in already moved on
-          // Hands-free loop: voice in → mic reopens; typed → it doesn't.
-          if (lastInputVoice.current) beginListening();
-          else setOrb('idle');
-        });
+      if (queue) {
+        if ((stateRef.current as OrbState) === 'thinking') setOrb('speaking');
+        queue.close(); // flushes the last fragment; onIdle finishes the turn
       } else {
         setOrb('idle');
       }
@@ -152,7 +174,8 @@ export function OrbPage({ chatEnabled }: { chatEnabled: boolean }) {
   const orbTap = () => {
     primeAudio();
     if (stateRef.current === 'speaking') {
-      // Barge-in: cut her off, open the mic immediately.
+      // Barge-in: cut her off (queue + audio), open the mic immediately.
+      queueRef.current?.cancel();
       stopSpeaking();
       beginListening();
     } else if (stateRef.current === 'listening') {
@@ -171,9 +194,27 @@ export function OrbPage({ chatEnabled }: { chatEnabled: boolean }) {
         .catch(() => ({}))) as { ttsConfigured?: boolean; brain?: typeof brain };
       setDiag(await getDiagnostics(Boolean(me.ttsConfigured)));
       setBrain(me.brain ?? null);
+      const h = (await fetch('/api/health/services?force=1')
+        .then((r) => (r.ok ? r.json() : null))
+        .catch(() => null)) as typeof health;
+      setHealth(h);
     }
     setShowDiag((v) => !v);
   };
+
+  // A dead brain or voice key is announced in the status line up front, not
+  // discovered as a raw 401 mid-conversation.
+  useEffect(() => {
+    fetch('/api/health/services')
+      .then((r) => (r.ok ? r.json() : null))
+      .then((h: typeof health) => setHealth(h))
+      .catch(() => undefined);
+  }, []);
+  const statusText = !chatEnabled
+    ? 'CHAT NEEDS AN API KEY ON THE SERVER'
+    : health && !health.brain.ok && state === 'idle'
+      ? 'BRAIN OFFLINE — OPEN SYSTEM CHECK'
+      : STATUS[state];
 
   return (
     <div className="orb-room">
@@ -192,7 +233,7 @@ export function OrbPage({ chatEnabled }: { chatEnabled: boolean }) {
         />
         <div className="orb-status" aria-live="polite">
           <span className={`orb-dot s-${state}`} />
-          {chatEnabled ? STATUS[state] : 'CHAT NEEDS AN API KEY ON THE SERVER'}
+          {statusText}
         </div>
       </div>
 
@@ -244,6 +285,13 @@ export function OrbPage({ chatEnabled }: { chatEnabled: boolean }) {
           <div>microphone: {diag.micPermission}</div>
           <div>audio context: {diag.audioContextState}</div>
           <div>playback unlocked: {diag.audioUnlocked ? 'yes' : 'not yet — tap the orb once'}</div>
+          <div>time to first word: {lastTtfw.current === null ? 'no reply yet' : `${(lastTtfw.current / 1000).toFixed(1)}s`}</div>
+          {health && (
+            <>
+              <div style={{ color: health.brain.ok ? undefined : 'var(--alert)' }}>brain: {health.brain.detail}</div>
+              <div style={{ color: health.voice.ok ? undefined : 'var(--alert)' }}>voice: {health.voice.detail}</div>
+            </>
+          )}
           <div>voice path: {diag.ttsPath}</div>
           <div>last error: {diag.lastError ?? 'none'}</div>
           {brain && (

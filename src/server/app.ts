@@ -64,16 +64,26 @@ export function buildApp(deps: AppDeps): FastifyInstance {
     if (!authed(req)) return reply.code(401).send({ error: 'authentication required' });
   });
 
-  app.get('/healthz', async () => ({
-    ok: true,
-    commit: (process.env['RENDER_GIT_COMMIT'] ?? 'dev').slice(0, 10),
-    web: existsSync(join(dirname(fileURLToPath(import.meta.url)), '..', '..', 'dist', 'web', 'index.html'))
-      ? 'built'
-      : 'MISSING',
-    storage: deps.dataPersistent === false ? 'IN MEMORY' : 'persistent',
-    mode: process.env['SMOKEBALL_BASE_URL'] ? 'real' : 'mock',
-    uptimeSec: Math.round(process.uptime()),
-  }));
+  app.get('/healthz', async () => {
+    const { checkBrain, checkVoice } = await import('./health.js');
+    const { PAM_MODEL } = await import('./agent/loop.js');
+    const [brain, voice] = deps.llm
+      ? await Promise.all([checkBrain(PAM_MODEL), checkVoice(ctx.db)])
+      : [{ ok: false, detail: 'no Anthropic key on the server' }, { ok: false, detail: 'not checked' }];
+    return {
+      ok: true,
+      commit: (process.env['RENDER_GIT_COMMIT'] ?? 'dev').slice(0, 10),
+      web: existsSync(join(dirname(fileURLToPath(import.meta.url)), '..', '..', 'dist', 'web', 'index.html'))
+        ? 'built'
+        : 'MISSING',
+      storage: deps.dataPersistent === false ? 'IN MEMORY' : 'persistent',
+      mode: process.env['SMOKEBALL_BASE_URL'] ? 'real' : 'mock',
+      model: PAM_MODEL,
+      brain: brain.ok ? 'ok' : `DOWN — ${brain.detail}`,
+      voice: voice.ok ? 'ok' : voice.detail,
+      uptimeSec: Math.round(process.uptime()),
+    };
+  });
 
   // ------------------------------------------------------------------ auth
   app.post('/api/login', async (req, reply) => {
@@ -201,6 +211,17 @@ export function buildApp(deps: AppDeps): FastifyInstance {
   // -------------------------------------------------- identity & settings
   const EDITABLE_SETTINGS = new Set(['identity.md', 'knowledge.md', 'elevenlabs_voice_id']);
 
+  // Service health: brain (Anthropic) + voice (ElevenLabs), cached 3 min;
+  // ?force=1 re-checks now. Surfaced on /healthz, /api/smokeball/verify,
+  // and the orb's status line.
+  app.get('/api/health/services', async (req) => {
+    const force = (req.query as { force?: string }).force === '1';
+    const { checkBrain, checkVoice } = await import('./health.js');
+    const { PAM_MODEL } = await import('./agent/loop.js');
+    const [brain, voice] = await Promise.all([checkBrain(PAM_MODEL, force), checkVoice(ctx.db, force)]);
+    return { brain, voice, model: PAM_MODEL };
+  });
+
   app.get('/api/settings', async () => {
     const { getIdentity, getKnowledge } = await import('./identity.js');
     const { eq } = await import('drizzle-orm');
@@ -249,10 +270,15 @@ export function buildApp(deps: AppDeps): FastifyInstance {
 
   // ------------------------------------------------------------------ tts
   // ElevenLabs relay: the key stays server-side, restricted to synthesis.
+  // Clips are cached in memory by (voice, text) so a streamed sentence that
+  // was PREFETCHED while the previous one played is served instantly.
+  const ttsCache = new Map<string, { buf: Buffer; at: number }>();
+  const TTS_CACHE_MAX = 200;
+  const TTS_CACHE_TTL_MS = 10 * 60 * 1000;
   app.post('/api/tts', async (req, reply) => {
     const apiKey = (process.env['ELEVENLABS_API_KEY'] ?? '').trim();
     if (!apiKey) return reply.code(501).send({ error: 'no_tts_key' });
-    const { text } = (req.body ?? {}) as { text?: string };
+    const { text, prefetch } = (req.body ?? {}) as { text?: string; prefetch?: boolean };
     if (!text?.trim()) return reply.code(400).send({ error: 'empty text' });
     const { eq } = await import('drizzle-orm');
     const voiceRow = await ctx.db
@@ -261,6 +287,12 @@ export function buildApp(deps: AppDeps): FastifyInstance {
       .where(eq(schema.appSettings.key, 'elevenlabs_voice_id'))
       .limit(1);
     const voiceId = voiceRow[0]?.value || '21m00Tcm4TlvDq8ikWAM'; // "Rachel" default
+    const key = `${voiceId}\u0000${text.slice(0, 2500)}`;
+    const hit = ttsCache.get(key);
+    if (hit && Date.now() - hit.at < TTS_CACHE_TTL_MS) {
+      if (prefetch) return { cached: true };
+      return reply.type('audio/mpeg').header('x-pam-tts-cache', 'hit').send(hit.buf);
+    }
     const res = await fetch(`https://api.elevenlabs.io/v1/text-to-speech/${voiceId}?output_format=mp3_44100_64`, {
       method: 'POST',
       headers: { 'xi-api-key': apiKey, 'content-type': 'application/json' },
@@ -271,7 +303,13 @@ export function buildApp(deps: AppDeps): FastifyInstance {
       return reply.code(502).send({ error: detail });
     }
     const buf = Buffer.from(await res.arrayBuffer());
-    return reply.type('audio/mpeg').send(buf);
+    if (ttsCache.size >= TTS_CACHE_MAX) {
+      const oldest = [...ttsCache.entries()].sort((a, b) => a[1].at - b[1].at)[0];
+      if (oldest) ttsCache.delete(oldest[0]);
+    }
+    ttsCache.set(key, { buf, at: Date.now() });
+    if (prefetch) return { cached: true };
+    return reply.type('audio/mpeg').header('x-pam-tts-cache', 'miss').send(buf);
   });
 
   app.get('/api/settlements', async () => {
@@ -516,7 +554,7 @@ export function buildApp(deps: AppDeps): FastifyInstance {
 
       // Bounded context window: full history stays in the DB; the model sees
       // the most recent slice (block-2 snapshot carries current state anyway).
-      const window = session.history.slice(-40);
+      const window = session.history.slice(-60); // ~30 turns; drift checkpoint still fires at 28 msgs
       const turn = await runAgentTurn(ctx, deps.llm, window, message, {
         onText: (delta) => send({ type: 'text_delta', text: delta }),
         onTool: (name) => send({ type: 'tool', name }),

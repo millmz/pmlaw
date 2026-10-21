@@ -123,7 +123,7 @@ describe('agent loop', () => {
       },
     };
     const turn = await runAgentTurn(ctx, infinite, [], 'loop forever');
-    expect(turn.toolCalls.length).toBe(8);
+    expect(turn.toolCalls.length).toBe(12);
     expect(turn.text).toContain('tool-call limit');
   });
 });

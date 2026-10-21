@@ -143,7 +143,13 @@ async function main() {
   };
 
   let llm: LlmClient | undefined;
-  if (pamApiKey()) llm = await anthropicLlm();
+  if (pamApiKey()) {
+    llm = await anthropicLlm();
+    const { PAM_MODEL } = await import('./agent/loop.js');
+    const { checkBrain } = await import('./health.js');
+    // Boot-time ping so a dead key is in the log, not in Jeff's first question.
+    void checkBrain(PAM_MODEL).then((r) => console.log(`[pam] brain (${PAM_MODEL}): ${r.ok ? 'ok' : 'DOWN — ' + r.detail}`));
+  }
   phase('llm ready');
 
   // Webhook signing key: env wins; otherwise one is generated once and kept

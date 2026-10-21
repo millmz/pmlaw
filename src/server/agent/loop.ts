@@ -71,7 +71,7 @@ export interface AgentTurnResult {
   messages: LlmMessage[];
 }
 
-const MAX_STEPS = 8;
+const MAX_STEPS = 12; // newer models chain more tools per turn without drifting
 
 export function toolDefinitions(): { name: string; description: string; input_schema: unknown }[] {
   return ALL_TOOLS.map((t) => ({
@@ -205,8 +205,11 @@ export function pamApiKeyInfo(): KeyInfo {
   return { source: 'none', prefix: '', length: 0, looksAnthropic: false, skipped };
 }
 
+/** Model choice: env override, else the current Sonnet. */
+export const PAM_MODEL = process.env['PAM_MODEL']?.trim() || 'claude-sonnet-5-5';
+
 /** Production LLM client over the Anthropic SDK, with true delta streaming. */
-export async function anthropicLlm(model = 'claude-sonnet-5'): Promise<LlmClient> {
+export async function anthropicLlm(model = PAM_MODEL): Promise<LlmClient> {
   const { default: Anthropic } = await import('@anthropic-ai/sdk');
   const client = new Anthropic({ apiKey: pamApiKey() ?? null });
   return {
