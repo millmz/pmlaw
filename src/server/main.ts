@@ -102,10 +102,14 @@ async function main() {
     console.log(`[pam] smokeball oauth: ${tokenProvider.grant} grant via ${normalizeTokenUrl(authUrl)}`);
   }
 
+  // Real credentials apply ONLY in real mode. In demo mode the built-in mock
+  // accepts only its own dummy key — leftover SMOKEBALL_* vars in the
+  // environment must not leak in (deleting just the base URL must be enough
+  // to fall back to the demo).
   const client = new SmokeballClient({
     baseUrl,
-    apiKey: process.env['SMOKEBALL_API_KEY'] ?? 'mock-api-key',
-    accessToken: process.env['SMOKEBALL_TOKEN'] ?? 'mock-token',
+    apiKey: useReal ? (process.env['SMOKEBALL_API_KEY'] ?? '') : 'mock-api-key',
+    accessToken: useReal ? (process.env['SMOKEBALL_TOKEN'] ?? '') : 'mock-token',
     ...(tokenProvider ? { tokenProvider } : {}),
     rps: useReal ? 4 : 50,
   });
@@ -215,8 +219,13 @@ async function main() {
       .catch((e) => console.error('[pam] full sync failed (server stays up; see /api/smokeball/verify):', e));
   } else {
     // The mock is local and deterministic — await it so tests and dev see
-    // data the moment the port answers.
-    console.log('[pam] synced:', await worker.fullSync());
+    // data the moment the port answers. Even here, a failure must not take
+    // the port down with it.
+    try {
+      console.log('[pam] synced:', await worker.fullSync());
+    } catch (e) {
+      console.error('[pam] demo full sync failed (server stays up):', e instanceof Error ? e.message : e);
+    }
   }
   const syncTimer = setInterval(() => {
     worker
