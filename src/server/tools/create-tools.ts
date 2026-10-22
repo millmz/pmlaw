@@ -4,7 +4,7 @@ import { z } from 'zod';
 import { appNow, FIRM_TZ } from '../../core/dates.js';
 import { schema } from '../db/index.js';
 import { cite } from './citations.js';
-import type { ToolContext, ToolDef, ToolResult } from './types.js';
+import { WRITES_OFF_RESULT, writesOff, type ToolContext, type ToolDef, type ToolResult } from './types.js';
 
 /**
  * Creating tasks and calendar events by conversation — the second and third
@@ -110,7 +110,9 @@ const proposeTaskCreate: ToolDef = {
           matter: r.matter?.label ?? 'no matter (general task)',
           assignedTo: 'you',
           ...(p.dueDate && p.dueDate < today ? { warning: 'That due date is already in the past.' } : {}),
-          note: 'Nothing is created in Smokeball until the user confirms.',
+          note: writesOff(ctx)
+            ? 'TRIAL PERIOD: changes to Smokeball are switched off — this card shows what would happen, nothing will be created.'
+            : 'Nothing is created in Smokeball until the user confirms.',
         },
       },
       citations: r.matter ? [cite('matter', r.matter.id, r.matter.label)] : [],
@@ -133,6 +135,15 @@ const executeTaskCreate: ToolDef = {
       return { data: { error: 'That confirmation has expired or was already used — propose the task again.' }, citations: [], asOf };
     }
     ctx.confirmations!.delete(confirmationToken);
+    if (writesOff(ctx)) {
+      await ctx.db.insert(schema.auditLog).values({
+        actor: ctx.currentStaffId,
+        action: 'write:task_create:REFUSED_WRITES_OFF',
+        params: { subject: pending.subject, dueDate: pending.dueDate ?? null },
+        result: 'refused — writes off (shadow mode)',
+      });
+      return WRITES_OFF_RESULT(asOf);
+    }
     if (!ctx.smokeball) throw new Error('writes unavailable: no Smokeball connection');
 
     const createdAfter = Date.now() - 5_000;
@@ -255,7 +266,9 @@ const proposeEventCreate: ToolDef = {
           ...(conflicts.length
             ? { conflicts: conflicts.map((c) => `${c.subject} (${DateTime.fromISO(c.startTime).setZone(FIRM_TZ).toFormat('h:mm a')})`) }
             : {}),
-          note: 'Nothing is created in Smokeball until the user confirms.',
+          note: writesOff(ctx)
+            ? 'TRIAL PERIOD: changes to Smokeball are switched off — this card shows what would happen, nothing will be created.'
+            : 'Nothing is created in Smokeball until the user confirms.',
         },
       },
       citations: [
@@ -281,6 +294,15 @@ const executeEventCreate: ToolDef = {
       return { data: { error: 'That confirmation has expired or was already used — propose the event again.' }, citations: [], asOf };
     }
     ctx.confirmations!.delete(confirmationToken);
+    if (writesOff(ctx)) {
+      await ctx.db.insert(schema.auditLog).values({
+        actor: ctx.currentStaffId,
+        action: 'write:event_create:REFUSED_WRITES_OFF',
+        params: { subject: pending.subject, start: pending.startTime },
+        result: 'refused — writes off (shadow mode)',
+      });
+      return WRITES_OFF_RESULT(asOf);
+    }
     if (!ctx.smokeball) throw new Error('writes unavailable: no Smokeball connection');
 
     const receipt = await ctx.smokeball.createEvent({

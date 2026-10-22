@@ -48,7 +48,24 @@ export interface ToolContext {
   smokeball?: SmokeballClient;
   /** Single-use confirmation tokens for the write flow (docs/03). */
   confirmations?: Map<string, PendingConfirmation>;
+  /** Shadow mode: false = every write to Smokeball is refused politely
+   *  (PAM_WRITES=off). Reads, cards, memory, and audit all still work. */
+  writesEnabled?: boolean;
 }
+
+/** Shared refusal for write execution while writes are off. */
+export const WRITES_OFF_RESULT = (asOf: string): ToolResult => ({
+  data: {
+    refused: true,
+    writesOff: true,
+    reason:
+      'Changes to Smokeball are switched off during the trial period — I can show you exactly what I would do, but nothing is written until Adam turns writes on.',
+  },
+  citations: [],
+  asOf,
+});
+
+export const writesOff = (ctx: ToolContext): boolean => ctx.writesEnabled === false;
 
 export interface ToolResult {
   data: unknown;

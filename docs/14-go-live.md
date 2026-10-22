@@ -26,9 +26,12 @@ check you can see before taking the next.
       questions; writes (task/event creation, rescheduling) only happen after
       he confirms a card, and never anything court-filed/client-facing/money.
 
-## 1. The switch (Render → pam → Environment)
+## 1. The switch (Render → pam → Environment) — in SHADOW MODE
 
-Change exactly these; leave everything else:
+Change exactly these; leave everything else. The sixth line is the point:
+with `PAM_WRITES=off` PAM reads the firm's real account but refuses every
+write (cards still show what would happen), so the first week carries zero
+risk of touching Smokeball. Remove it after the shadow gate.
 
 | Key | Production value |
 |---|---|
@@ -37,6 +40,7 @@ Change exactly these; leave everything else:
 | `SMOKEBALL_API_KEY` | Production tab API key |
 | `SMOKEBALL_CLIENT_ID` | Production tab Client ID |
 | `SMOKEBALL_CLIENT_SECRET` | Production tab Client Secret |
+| `PAM_WRITES` | `off` (shadow mode; delete the variable to enable writes later) |
 
 Save → redeploy (~4 min). On boot PAM detects the **source change**
 (`stagingapi…` → `api.smokeball.com`) and **wipes the staging mirror** before
@@ -44,7 +48,9 @@ the first sync — chat history, settings, memories, audit log all survive.
 
 ## 2. Watch it come up (`/healthz`, then `/api/smokeball/verify`)
 
-- `/healthz` → `"web":"built"`, `"storage":"persistent"`, `"mode":"real"`.
+- `/healthz` → `"web":"built"`, `"storage":"persistent"`, `"mode":"real"`,
+  `"writes":"off (shadow)"`, `"brain":"ok"`. The app shows a **Trial · read
+  only** badge in the top bar while writes are off.
 - `/api/smokeball/verify`:
   - `allOk: true` and real counts: staff = the firm's roster, matters in the
     hundreds. **The first full sync walks every open matter's folders, files,

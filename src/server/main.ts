@@ -133,11 +133,17 @@ async function main() {
 
   const worker = new SyncWorker(db, client);
 
+  // Shadow mode: PAM_WRITES=off makes every Smokeball write refuse politely
+  // (read-only trial on the firm's real account). Default: on.
+  const writesEnabled = (process.env['PAM_WRITES'] ?? 'on').trim().toLowerCase() !== 'off';
+  if (!writesEnabled) console.log('[pam] WRITES OFF — shadow mode: nothing will be written to Smokeball');
+
   const ctx: ToolContext = {
     db,
     currentStaffId: 's-jeff',
     smokeball: client,
     confirmations: new Map(),
+    writesEnabled,
     // Mock data is anchored; real data uses the live clock.
     ...(useReal ? {} : { fixedNowIso: GOLDEN_ANCHOR_ISO }),
   };

@@ -78,6 +78,7 @@ export function buildApp(deps: AppDeps): FastifyInstance {
         : 'MISSING',
       storage: deps.dataPersistent === false ? 'IN MEMORY' : 'persistent',
       mode: process.env['SMOKEBALL_BASE_URL'] ? 'real' : 'mock',
+      writes: ctx.writesEnabled === false ? 'off (shadow)' : 'on',
       model: PAM_MODEL,
       brain: brain.ok ? 'ok' : `DOWN — ${brain.detail}`,
       voice: voice.ok ? 'ok' : voice.detail,
@@ -111,6 +112,7 @@ export function buildApp(deps: AppDeps): FastifyInstance {
     authed: authed(req),
     gated: Boolean(accessCode),
     chatEnabled: Boolean(deps.llm),
+    writesEnabled: ctx.writesEnabled !== false,
     user: { name: 'Jeff Millman', initials: 'JTM', staffId: ctx.currentStaffId },
   }));
 
@@ -398,6 +400,7 @@ export function buildApp(deps: AppDeps): FastifyInstance {
         deps.dataPersistent === false
           ? 'IN MEMORY — persistent disk missing; settings/chat are lost on restart. Add a disk mounted at /var/data.'
           : 'persistent disk',
+      writes: ctx.writesEnabled === false ? 'OFF — shadow mode (PAM_WRITES=off)' : 'on',
       lastSync: worker.lastSync ?? 'no sync attempted yet',
       lastWebhook: worker.lastWebhook ?? 'none received yet',
       mode: process.env['SMOKEBALL_BASE_URL'] ? 'REAL Smokeball' : 'mock (golden data)',
@@ -482,6 +485,9 @@ export function buildApp(deps: AppDeps): FastifyInstance {
   // one 30-minute event tomorrow, both clearly labeled as safe to delete.
   app.post('/api/smokeball/seed', async (_req, reply) => {
     if (!ctx.smokeball) return reply.code(503).send({ error: 'no Smokeball client configured' });
+    if (ctx.writesEnabled === false) {
+      return reply.code(423).send({ error: 'Writes are switched off (PAM_WRITES=off) — shadow mode. Nothing was created.' });
+    }
     const { appNow, FIRM_TZ } = await import('../core/dates.js');
     const now = appNow(ctx.fixedNowIso).setZone(FIRM_TZ);
     const stamp = now.toFormat('LLL d, h:mm a');

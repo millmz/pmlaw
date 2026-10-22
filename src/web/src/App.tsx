@@ -166,6 +166,11 @@ function Shell() {
           >
             A<span style={{ fontSize: '1.25em' }}>A</span>
           </button>
+          {me?.writesEnabled === false && (
+            <span className="trial-badge" title="Shadow trial: PAM reads the firm's real data but writes nothing to Smokeball until writes are switched on.">
+              Trial · read only
+            </span>
+          )}
           <span className="asof"><span className="dot" />Synced</span>
         </div>
         <div className="page" style={onChatPage ? { padding: 0, overflow: 'hidden' } : undefined}>

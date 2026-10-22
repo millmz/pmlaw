@@ -54,3 +54,8 @@ services:
         sync: false
       - key: PAM_PUBLIC_URL
         sync: false
+      # Shadow mode for the production trial: 'off' refuses every Smokeball
+      # write (cards still show what would happen). Remove or set 'on' after
+      # the shadow week.
+      - key: PAM_WRITES
+        sync: false

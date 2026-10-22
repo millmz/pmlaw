@@ -242,6 +242,11 @@ input, select { font: inherit; }
 }
 .topbar .spacer { flex: 1; }
 .asof { display: flex; align-items: center; gap: 8px; font-size: 12.5px; letter-spacing: 0.06em; color: var(--ink-3); }
+.trial-badge {
+  font: 500 11px/1 var(--display); letter-spacing: 0.22em; text-transform: uppercase;
+  color: var(--warn); border: 1px solid color-mix(in srgb, var(--warn) 55%, transparent);
+  padding: 6px 10px; border-radius: 2px; background: var(--warn-bg); white-space: nowrap;
+}
 .asof .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--ok); box-shadow: 0 0 0 3px color-mix(in srgb, var(--ok) 18%, transparent); }
 .ts-toggle {
   border: 1px solid var(--line); background: transparent; border-radius: 2px;

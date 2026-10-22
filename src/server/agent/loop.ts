@@ -109,6 +109,7 @@ export async function runAgentTurn(
         snapshot,
         memories,
         longConversation: history.length >= 28, // ~14 turns → drift checkpoint
+        writesOff: ctx.writesEnabled === false,
       }),
     },
   ];

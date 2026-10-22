@@ -38,6 +38,8 @@ export interface Me {
   authed: boolean;
   gated: boolean;
   chatEnabled: boolean;
+  /** False during the read-only shadow trial (PAM_WRITES=off). */
+  writesEnabled?: boolean;
   user: { name: string; initials: string; staffId: string };
 }
 export interface MatterHit {

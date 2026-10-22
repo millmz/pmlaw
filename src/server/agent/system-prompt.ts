@@ -51,6 +51,8 @@ export function buildDynamicBlock(opts: {
   snapshot?: string;
   memories?: string[];
   longConversation?: boolean;
+  /** Shadow trial: writes refused server-side; tell the user plainly when asked to change something. */
+  writesOff?: boolean;
 }): string {
   const parts: string[] = [];
   const stamp = opts.now.toFormat("cccc, LLLL d, yyyy 'at' h:mm a");
@@ -63,6 +65,11 @@ export function buildDynamicBlock(opts: {
   if (opts.memories && opts.memories.length > 0) {
     parts.push(
       `# Recalled memories (point-in-time; verify specifics against live data)\n${opts.memories.map((m) => `- ${m}`).join('\n')}`,
+    );
+  }
+  if (opts.writesOff) {
+    parts.push(
+      'Trial period: changes to Smokeball are switched OFF right now. You may still propose a task, event, or reschedule and show the card, but say plainly that nothing will be written until Adam turns writes on — never imply a change happened.',
     );
   }
   if (opts.longConversation) {

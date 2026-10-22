@@ -5,7 +5,7 @@ import { z } from 'zod';
 import { FIRM_TZ, isStatuteReminder } from '../../core/dates.js';
 import { schema } from '../db/index.js';
 import { cite } from './citations.js';
-import type { ToolDef } from './types.js';
+import { WRITES_OFF_RESULT, writesOff, type ToolDef } from './types.js';
 
 /**
  * The first write action (docs/03 confirmation flow, scoped to one verb):
@@ -107,7 +107,9 @@ const proposeTaskReschedule: ToolDef = {
           task: task.subject,
           from: task.dueDate ?? 'no due date',
           to: p.newDueDate,
-          note: 'Nothing changes in Smokeball until the user confirms.',
+          note: writesOff(ctx)
+            ? 'TRIAL PERIOD: changes to Smokeball are switched off — this card shows what would happen, nothing will be written.'
+            : 'Nothing changes in Smokeball until the user confirms.',
         },
       },
       citations: [cite('task', task.id, `Task: ${task.subject}`)],
@@ -138,6 +140,15 @@ const executeTaskReschedule: ToolDef = {
       };
     }
     ctx.confirmations!.delete(p.confirmationToken); // single-use
+    if (writesOff(ctx)) {
+      await ctx.db.insert(schema.auditLog).values({
+        actor: ctx.currentStaffId,
+        action: 'write:task_reschedule:REFUSED_WRITES_OFF',
+        params: { taskId: pending.taskId, newDueDate: pending.newDueDate },
+        result: 'refused — writes off (shadow mode)',
+      });
+      return WRITES_OFF_RESULT(asOf);
+    }
     if (!ctx.smokeball) throw new Error('writes unavailable: no Smokeball connection');
 
     await ctx.smokeball.updateTask(pending.taskId, { dueDate: pending.newDueDate }, ctx.currentStaffId);
