@@ -344,7 +344,34 @@ export function buildApp(deps: AppDeps): FastifyInstance {
       .from(schema.auditLog)
       .orderBy(desc(schema.auditLog.id))
       .limit(100);
-    return { entries: rows };
+    // Flags never scroll off the bottom of the log.
+    const flags = await ctx.db
+      .select()
+      .from(schema.auditLog)
+      .where(eq(schema.auditLog.action, 'feedback'))
+      .orderBy(desc(schema.auditLog.id))
+      .limit(50);
+    return { entries: rows, flags };
+  });
+
+  /** "Something looks wrong" — one tap from any page. Lands in the audit
+   *  log so the trial week produces a list of things to fix, in the user's
+   *  own words, instead of things half-remembered. */
+  app.post('/api/feedback', async (req, reply) => {
+    const b = (req.body ?? {}) as { note?: unknown; page?: unknown; context?: unknown };
+    const note = typeof b.note === 'string' ? b.note.trim().slice(0, 2000) : '';
+    if (!note) return reply.code(400).send({ error: 'Say what looks wrong.' });
+    await ctx.db.insert(schema.auditLog).values({
+      actor: ctx.currentStaffId,
+      action: 'feedback',
+      params: {
+        note,
+        page: typeof b.page === 'string' ? b.page.slice(0, 120) : undefined,
+        context: typeof b.context === 'string' ? b.context.slice(0, 1500) : undefined,
+      },
+      result: 'flagged for review',
+    });
+    return { ok: true };
   });
 
   /** Pull now. `?full=1` re-reads everything (runs in the background — a

@@ -10,6 +10,7 @@ import {
 } from 'react-router-dom';
 import { api } from './api.js';
 import { ChatPanel } from './chat.js';
+import { FlagButton } from './flag.js';
 import { TodayPage } from './pages/Today.js';
 import { TasksPage } from './pages/Tasks.js';
 import { MatterDetailPage, MattersPage } from './pages/Matters.js';
@@ -153,9 +154,9 @@ function SyncPill() {
           ? `Last synced with Smokeball ${ago(lastOk)}${data?.mode === 'demo' ? ' (demo data)' : ''}.`
           : 'Waiting for the first sync with Smokeball.';
   return (
-    <span className={`asof asof-${tone}`} title={title} data-testid="sync-pill">
+    <span className={`asof asof-${tone}`} title={title} aria-label={label} data-testid="sync-pill">
       <span className="dot" />
-      {label}
+      <span className="asof-label">{label}</span>
       {data?.mode === 'demo' && <span className="asof-demo">Demo</span>}
     </span>
   );
@@ -256,9 +257,10 @@ function Shell() {
           >
             A<span style={{ fontSize: '1.25em' }}>A</span>
           </button>
+          <FlagButton />
           {me?.writesEnabled === false && (
             <span className="trial-badge" title="Shadow trial: PAM reads the firm's real data but writes nothing to Smokeball until writes are switched on.">
-              Trial · read only
+              Trial<span className="long"> · read only</span>
             </span>
           )}
           <SyncPill />

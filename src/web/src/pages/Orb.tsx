@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { streamChat } from '../api.js';
+import { FlagButton } from '../flag.js';
 import { OrbRenderer, type OrbState } from '../orb-canvas.js';
 import { SpeechQueue } from '../speech-queue.js';
 import {
@@ -25,6 +26,10 @@ interface Line {
   text: string;
   typed?: boolean; // pam lines type themselves in once
 }
+
+/** First things worth asking — shown while the console is empty, so a
+ *  first-time user is never looking at a blank prompt. */
+const STARTERS = ['Brief me on today', 'What’s overdue?', 'What am I negotiating?', 'What’s in court this week?'];
 
 const STATUS: Record<string, string> = {
   idle: 'TAP THE ORB OR TYPE BELOW',
@@ -63,6 +68,15 @@ export function OrbPage({ chatEnabled }: { chatEnabled: boolean }) {
     r.start();
     // Demo hook: lets a console (or a test) throw the Go-Canes burst.
     (window as unknown as { pamCelebrate?: () => void }).pamCelebrate = () => r.celebrate();
+    // Arrived with a question (Today's "Brief me")? Then that is the
+    // conversation — don't race it with the old transcript.
+    if (new URLSearchParams(window.location.search).has('ask')) {
+      return () => {
+        r.stop();
+        stopSpeaking();
+        listenRef.current?.stop();
+      };
+    }
     // Resume open conversation transcript
     fetch('/api/chat/history')
       .then((res) => (res.ok ? res.json() : { messages: [] }))
@@ -171,6 +185,20 @@ export function OrbPage({ chatEnabled }: { chatEnabled: boolean }) {
     }
   }, [ask, setOrb]);
 
+  // Arrived from "Brief me" (or any link carrying ?ask=): ask it once.
+  const askedFromUrl = useRef(false);
+  useEffect(() => {
+    if (askedFromUrl.current) return;
+    const q = new URLSearchParams(window.location.search).get('ask');
+    if (!q) return;
+    askedFromUrl.current = true;
+    // Consume the question — a refresh must not ask it again.
+    window.history.replaceState(null, '', window.location.pathname);
+    if (chatEnabled) void ask(q, false);
+    else addLine({ who: 'sys', text: 'PAM cannot answer yet — her brain is not connected on the server.' });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ask, chatEnabled]);
+
   const orbTap = () => {
     primeAudio();
     if (stateRef.current === 'speaking') {
@@ -241,6 +269,23 @@ export function OrbPage({ chatEnabled }: { chatEnabled: boolean }) {
         {lines.map((l, i) => (
           <ConsoleLine key={i} line={l} isLast={i === lines.length - 1} />
         ))}
+        {lines.length === 0 && !partial && state === 'idle' && chatEnabled && (
+          <div className="orb-starters" aria-label="Things to ask">
+            {STARTERS.map((q) => (
+              <button
+                key={q}
+                type="button"
+                className="orb-starter"
+                onClick={() => {
+                  primeAudio();
+                  void ask(q, false);
+                }}
+              >
+                {q}
+              </button>
+            ))}
+          </div>
+        )}
         {partial && (
           <div className="orb-line you">
             <span className="who">you ❯</span> {partial}
@@ -267,6 +312,17 @@ export function OrbPage({ chatEnabled }: { chatEnabled: boolean }) {
           disabled={!chatEnabled || state === 'thinking'}
           aria-label="Ask PAM"
         />
+        {lines.some((l) => l.who === 'pam') && (
+          <FlagButton
+            className="orb-cmd"
+            label="[ flag that answer ]"
+            context={() => {
+              const lastPam = [...lines].reverse().find((l) => l.who === 'pam');
+              const lastYou = [...lines].reverse().find((l) => l.who === 'you');
+              return `Q: ${lastYou?.text ?? ''} — A: ${lastPam?.text ?? ''}`;
+            }}
+          />
+        )}
         <button type="button" className="orb-cmd" onClick={toggleDiag}>[ system check ]</button>
         <button
           type="button"

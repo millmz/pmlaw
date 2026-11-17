@@ -51,15 +51,26 @@ the first sync — chat history, settings, memories, audit log all survive.
 - `/healthz` → `"web":"built"`, `"storage":"persistent"`, `"mode":"real"`,
   `"writes":"off (shadow)"`, `"brain":"ok"`. The app shows a **Trial · read
   only** badge in the top bar while writes are off.
+- **The app itself tells you where it is.** A banner reads *"PAM is reading
+  your Smokeball for the first time"* with a progress bar; the header pill
+  goes First sync… → Synced. The order is deliberate: staff → matter types →
+  matters → **tasks and calendar (usable within a minute or two)** → client
+  names → each open matter's notes, files, and folders. Allow 5–15 minutes
+  for the whole walk at 4 requests/second; the docket does not wait for it.
 - `/api/smokeball/verify`:
   - `allOk: true` and real counts: staff = the firm's roster, matters in the
-    hundreds. **The first full sync walks every open matter's folders, files,
-    and memos at 4 requests/second — allow 5–15 minutes.** `lastSync` shows
-    `kind: "full"` with counts when it finishes; the incremental passes every
-    minute after.
+    hundreds. `lastSync` shows `kind: "full"` with counts when the first read
+    finishes; incremental passes run every minute after.
+  - `lastSync.warnings` lists anything PAM could not read (e.g. `files: 3
+    matter(s) could not be read … likely a missing scope`). A warning never
+    stops the sync — the rest of the firm still loads.
   - `webhooks.subscriptions` has one entry pointing at
     `pam-odwo.onrender.com/webhooks/smokeball`. (Appears after the first full
     sync completes.)
+- **Restarts are cheap.** A redeploy resumes from where the mirror left off
+  (log: `mirror present — catching up incrementally`); the firm is re-read in
+  full only on first run or a source change. To force one:
+  `POST /api/sync?full=1` (runs in the background; watch the header pill).
 - Render log: `[pam] current staff resolved to <uuid>` — PAM found Jeff in the
   real staff list (matched on "Millman"; set `PAM_STAFF_NAME` if the match is
   wrong).
@@ -76,11 +87,37 @@ no values** — and it answers the two unknowns that only real data can:
   guard matches the firm's 6/3/1-month reminders exactly (it currently matches
   "statute", "SOL", "limitations").
 
-Also worth a glance: `/api/settlements` — the board on real notes. Parsing
-expects Jeff's dictated labels (`Insurance:`, `Claim No.`, `Policy limits:`,
-`Adjuster:`, `Demand:`, `Offer: $X made <date> by <name>`); dates may be
-`7/21/26`, `July 21, 2026`, etc. Matters whose notes use other wording simply
-won't appear until a note is written in that shape.
+The adapter now also *searches* `matter.items` by key name (anything like
+"statute", "limitation", "SOL", "date of loss/accident/incident", "index
+number", "in suit"), so these may simply work — the inspect paste confirms it.
+
+### The Settle board on real data
+
+A matter gets a settlement analysis when **any one** of these is true: its
+matter type reads like injury work (personal injury, negligence, malpractice,
+MVA, slip and fall, wrongful death… by the firm's own wording), it has a
+Settlement Package folder or document, or its notes talk settlement money.
+Criminal, real-estate, and estate matters stay off.
+
+Notes are read two ways:
+
+1. **Labelled lines** (`Insurance:`, `Claim No.`, `Policy limits:`,
+   `Adjuster:`, `Demand:` / `Demand of`, `Offer:` / `offered $X on <date> by
+   <name>`) are parsed directly.
+2. **Free-form notes** ("Boland came up to 45k on June 9, we're holding at
+   120") go to a small model (`PAM_NOTES_MODEL`, default Haiku; set to `off`
+   to disable). Every figure, name, and date it returns must appear
+   word-for-word in the notes or it is discarded. Rows read this way carry a
+   **Read from notes** tag.
+
+"Sent" still requires email evidence from a firm address. PAM learns the
+firm's domains from the staff list; add others with
+`PAM_FIRM_EMAIL_DOMAINS=pmlawny.com,otherdomain.com`. Outlook `.msg` emails
+are read; scanned PDFs and Word files are listed but not read.
+
+The first time the board is opened after the first sync it may say *"PAM is
+still reading the firm's matters — N of M reviewed"* and fill in as it goes;
+after that it is instant, including across restarts.
 
 ## 4. Shadow week (the gate from docs/06)
 
@@ -94,7 +131,22 @@ Jeff uses PAM alongside Smokeball for 5–10 working days:
   <client>", one reschedule and one task creation — each confirms before acting.
 - **Memory**: "remember that…" once, then check Settings → *What PAM remembers*.
 
+- **Flag** (top bar, or `[ flag that answer ]` in the orb room): anything
+  wrong or awkward, in a sentence, the moment he sees it. Flags collect under
+  Activity → *Flagged for review* — that list is the week's punch list.
+
 **Gate: 10 consecutive clean morning briefs.** Until then PAM is advisory.
+
+### The first showing (15 minutes, in this order)
+
+1. **Today** on the big screen — his real day. Tap a later day tab.
+2. **Brief me** — PAM reads him the day out loud.
+3. Orb room: tap the orb and ask *"What am I negotiating?"*, then *"Where do
+   we stand on <a client he names>?"*
+4. **Settle** — his cases in play; tap an adjuster's number.
+5. Ask her to move a task: she shows the card and explains she is read-only
+   for the trial. That is the trust moment — nothing changes without him.
+6. Show him **Flag**. Hand him the phone and let him try the orb himself.
 
 ## 5. Things that are deliberately NOT automatic
 

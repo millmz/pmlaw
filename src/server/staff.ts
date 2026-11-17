@@ -11,7 +11,8 @@ export async function resolveCurrentStaffId(db: Db, current: string): Promise<st
   const rows = await db.select().from(schema.staff);
   if (rows.length === 0 || rows.some((r) => r.id === current)) return current;
   const prefer = (process.env['PAM_STAFF_NAME'] ?? 'millman').trim().toLowerCase();
-  const hit =
-    rows.find((r) => `${r.firstName} ${r.lastName}`.toLowerCase().includes(prefer)) ?? rows[0]!;
+  const matches = rows.filter((r) => `${r.firstName} ${r.lastName}`.toLowerCase().includes(prefer));
+  // Two people can share the surname (family firms do) — PAM is Jeff's.
+  const hit = matches.find((r) => /^jeff/i.test(r.firstName)) ?? matches[0] ?? rows[0]!;
   return hit.id;
 }

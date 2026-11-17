@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Link, useLocation } from 'react-router-dom';
 import { api } from '../api.js';
@@ -45,7 +45,7 @@ const STATUS_LABELS: Record<string, { label: string; cls: string }> = {
 };
 
 export function SettlementsPage() {
-  const { data, isLoading } = useQuery({
+  const { data, isLoading, refetch } = useQuery({
     queryKey: ['settlements'],
     queryFn: async () => {
       const res = await fetch('/api/settlements');
@@ -57,6 +57,15 @@ export function SettlementsPage() {
     // what is ready and keep asking until it is whole.
     refetchInterval: (q) => (q.state.data?.warming ? 4000 : false),
   });
+  // During the firm's first sync the notes are not all in yet — say so, and
+  // keep refreshing, rather than showing a short board as if it were whole.
+  const { data: status } = useQuery({ queryKey: ['status'], queryFn: api.status, refetchInterval: 15_000, retry: false });
+  const firstSync = status?.sync.state === 'first-sync';
+  useEffect(() => {
+    if (!firstSync) return;
+    const t = setInterval(() => void refetch(), 15_000);
+    return () => clearInterval(t);
+  }, [firstSync, refetch]);
 
   return (
     <div className="page-inner" style={{ maxWidth: 1160 }}>
@@ -68,6 +77,11 @@ export function SettlementsPage() {
         </div>
         <div className="card-body">
           {isLoading && <div className="skeleton" style={{ height: 120 }} />}
+          {firstSync && !data?.warming && (
+            <div className="board-warming" role="status">
+              PAM is still reading the firm’s notes and documents for the first time — more cases will appear here as she goes.
+            </div>
+          )}
           {data?.warming && (
             <div className="board-warming" role="status">
               PAM is still reading the firm’s matters
@@ -109,7 +123,7 @@ export function SettlementsPage() {
                     <span>
                       Adjuster: {row.adjusterName}
                       {row.adjusterPhone && (
-                        <> · <a href={`tel:${row.adjusterPhone.replace(/[^\d]/g, '')}`} style={{ color: 'var(--burgundy)', fontWeight: 700 }}>{row.adjusterPhone}</a></>
+                        <> · <a href={`tel:${row.adjusterPhone.replace(/[^\d]/g, '')}`} style={{ color: 'var(--link)', fontWeight: 700 }}>{row.adjusterPhone}</a></>
                       )}
                     </span>
                   )}
@@ -154,11 +168,34 @@ export function ActivityPage() {
           </p>
         </div>
       </div>
+      {data?.flags && data.flags.length > 0 && (
+        <div className="card">
+          <div className="card-h"><h2>Flagged for review</h2><span className="rule" /><span className="count">{data.flags.length}</span></div>
+          <div className="card-body">
+            {data.flags.map((e) => {
+              const p = (e.params ?? {}) as { note?: string; page?: string; context?: string };
+              return (
+                <div className="row" key={e.id}>
+                  <span className="t">{new Date(e.at).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}</span>
+                  <span className="grow">
+                    <b>{p.note}</b>
+                    <div className="meta">
+                      {new Date(e.at).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })}
+                      {p.page ? ` · on ${p.page}` : ''}
+                      {p.context ? ` · ${p.context}` : ''}
+                    </div>
+                  </span>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
       <div className="card">
         <div className="card-h"><h2>Recent activity</h2></div>
         <div className="card-body">
           {data?.entries.length === 0 && <div className="empty">No activity yet.</div>}
-          {data?.entries.map((e) => (
+          {data?.entries.filter((e) => e.action !== 'feedback').map((e) => (
             <div className="row" key={e.id}>
               <span className="t">{new Date(e.at).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })}</span>
               <span className="grow">

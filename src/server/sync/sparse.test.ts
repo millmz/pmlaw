@@ -17,6 +17,7 @@ const sparseClient = {
   ],
   listMatterTypes: async () => [{ id: 'mt-1', name: 'Personal Injury' }],
   listMatters: async () => [{ id: 'm-1', status: 'Open' }],
+  listMattersAdapted: async () => [{ id: 'm-1', status: 'Open', clientContactIds: [] }],
   listTasks: async () => [{ id: 't-1' }],
   listEvents: async () => [{ id: 'e-1' }],
   listFolders: async () => [{ id: 'f-1' }],

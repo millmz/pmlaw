@@ -33,6 +33,7 @@ import {
   staffUserId,
   toEventDto,
   toTaskDto,
+  type AdaptedMatter,
 } from './adapt.js';
 
 type Raw = Record<string, unknown>;
@@ -184,12 +185,21 @@ export class SmokeballClient {
   async listMatterTypes(): Promise<MatterType[]> {
     return this.present((await this.getAll<Raw>('/mattertypes')).map(adaptMatterType));
   }
-  async listMatters(params: { updatedSince?: string; status?: string } = {}): Promise<Matter[]> {
+  /** Matters as the API lists them — no per-matter contact lookups. Client
+   *  names arrive as the matter title until `clientNameFor` resolves them
+   *  (a firm's worth of /contacts calls must never stand between a first
+   *  sync and a usable docket). */
+  async listMattersAdapted(params: { updatedSince?: string; status?: string } = {}): Promise<AdaptedMatter[]> {
     const q = new URLSearchParams();
     if (params.updatedSince) q.set('LastUpdated', isoNoMillis(params.updatedSince));
     if (params.status) q.set('Status', params.status);
     const qs = q.toString();
-    const matters = this.present((await this.getAll<Raw>(`/matters${qs ? `?${qs}` : ''}`)).map(adaptMatter));
+    return this.present((await this.getAll<Raw>(`/matters${qs ? `?${qs}` : ''}`)).map(adaptMatter));
+  }
+  /** Matters with client names resolved inline — for small sets (the
+   *  incremental pass); the full sync resolves names as its own phase. */
+  async listMatters(params: { updatedSince?: string; status?: string } = {}): Promise<Matter[]> {
+    const matters = await this.listMattersAdapted(params);
     // Real matters name clients only by contact ref — resolve the first one.
     for (const m of matters) {
       const contactId = m.clientContactIds[0];
@@ -201,6 +211,10 @@ export class SmokeballClient {
       }
     }
     return matters.map(({ clientContactIds: _c, title: _t, ...core }) => core);
+  }
+  /** A client's name from /contacts (cached; null when unreadable). */
+  clientNameFor(contactId: string): Promise<{ firstName: string; lastName: string } | null> {
+    return this.contactName(contactId);
   }
   private async contactName(contactId: string): Promise<{ firstName: string; lastName: string } | null> {
     const hit = this.contactNames.get(contactId);

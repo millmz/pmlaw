@@ -1,4 +1,4 @@
-import { and, eq, getTableColumns, notInArray, sql } from 'drizzle-orm';
+import { eq, getTableColumns, inArray, sql } from 'drizzle-orm';
 import { DateTime } from 'luxon';
 import type { SmokeballClient } from '../../smokeball/client.js';
 import { adaptEvent, adaptMatter, adaptMemo, adaptTask } from '../../smokeball/adapt.js';
@@ -185,6 +185,14 @@ export class SyncWorker {
 
   /** True while the very first full read of this source is under way. */
   firstRun = false;
+  /** Set whenever a sync actually changed the mirror — lets dependants
+   *  (the settlement board warm-up) skip work when nothing moved. */
+  private dirty = true;
+  takeDirty(): boolean {
+    const d = this.dirty;
+    this.dirty = false;
+    return d;
+  }
 
   private running: Promise<unknown> | null = null;
   private syncTimer: ReturnType<typeof setTimeout> | null = null;
@@ -214,6 +222,7 @@ export class SyncWorker {
     if (rows.length === 0) return;
     // A batch may not touch the same id twice (Postgres rejects it) — last wins.
     rows = [...new Map(rows.map((r) => [r['id'], r])).values()];
+    this.dirty = true;
     const set: Record<string, unknown> = {};
     for (const [key, col] of Object.entries(getTableColumns(table))) {
       if (key === 'id') continue;
@@ -324,30 +333,45 @@ export class SyncWorker {
       }
       this.failures.set(kind, f);
     };
+    // Only what actually changed is written: on a real firm most refreshes
+    // find nothing new, and a disk write per matter per resource is what
+    // made the first read slow. Rows gone upstream are removed — a stale
+    // "Offer:" note must not live on the settlement board forever.
     // Notes first: they are the settlement source of truth.
     await one('memos', async () => {
       const ms = await this.client.listMemos(matterId);
-      await this.upsert(schema.memos, withIds(ms).map(toMemoRow));
-      // A note deleted in Smokeball must leave the mirror too — a stale
-      // "Offer:" line would otherwise live on the settlement board forever.
-      const keep = ms.map((m) => m.id).filter(Boolean);
-      await this.db
-        .delete(schema.memos)
-        .where(keep.length ? and(eq(schema.memos.matterId, matterId), notInArray(schema.memos.id, keep)) : eq(schema.memos.matterId, matterId));
+      const have = new Map(
+        (await this.db.select({ id: schema.memos.id, v: schema.memos.updatedAt }).from(schema.memos).where(eq(schema.memos.matterId, matterId))).map((r) => [r.id, r.v]),
+      );
+      await this.upsert(schema.memos, withIds(ms).filter((m) => !have.has(m.id) || have.get(m.id) !== m.updatedAt).map(toMemoRow));
+      const keep = new Set(ms.map((m) => m.id));
+      const gone = [...have.keys()].filter((id) => !keep.has(id));
+      if (gone.length) {
+        this.dirty = true;
+        await this.db.delete(schema.memos).where(inArray(schema.memos.id, gone));
+      }
       return ms.length;
     });
     await one('files', async () => {
       const fls = await this.client.listFiles(matterId);
-      await this.upsert(schema.files, withIds(fls).map(toFileRow));
-      const keep = fls.map((f) => f.id).filter(Boolean);
-      await this.db
-        .delete(schema.files)
-        .where(keep.length ? and(eq(schema.files.matterId, matterId), notInArray(schema.files.id, keep)) : eq(schema.files.matterId, matterId));
+      const have = new Map(
+        (await this.db.select({ id: schema.files.id, v: schema.files.dateModified }).from(schema.files).where(eq(schema.files.matterId, matterId))).map((r) => [r.id, r.v]),
+      );
+      await this.upsert(schema.files, withIds(fls).filter((f) => !have.has(f.id) || have.get(f.id) !== f.dateModified).map(toFileRow));
+      const keep = new Set(fls.map((f) => f.id));
+      const gone = [...have.keys()].filter((id) => !keep.has(id));
+      if (gone.length) {
+        this.dirty = true;
+        await this.db.delete(schema.files).where(inArray(schema.files.id, gone));
+      }
       return fls.length;
     });
     await one('folders', async () => {
       const fs = await this.client.listFolders(matterId);
-      await this.upsert(schema.folders, withIds(fs).map(toFolderRow));
+      const have = new Map(
+        (await this.db.select({ id: schema.folders.id, v: schema.folders.name }).from(schema.folders).where(eq(schema.folders.matterId, matterId))).map((r) => [r.id, r.v]),
+      );
+      await this.upsert(schema.folders, withIds(fs).filter((f) => !have.has(f.id) || have.get(f.id) !== f.name).map(toFolderRow));
       return fs.length;
     });
     this.refreshedAt.set(matterId, Date.now());
@@ -387,8 +411,26 @@ export class SyncWorker {
       await this.setCursor('mattertypes', startedAt);
     }
 
+    // Matters land immediately under their title; client names are their own
+    // phase below. (Names already resolved on an earlier sync are kept.)
     this.setProgress('full', 'matters');
-    const matterList: Matter[] = await this.client.listMatters();
+    const adapted = await this.client.listMattersAdapted();
+    const known = new Map(
+      (await this.db.select({ id: schema.matters.id, first: schema.matters.clientFirstName, last: schema.matters.clientLastName }).from(schema.matters)).map(
+        (r) => [r.id, r],
+      ),
+    );
+    const needName: { id: string; contactId: string; open: boolean }[] = [];
+    const matterList: Matter[] = adapted.map(({ clientContactIds, title: _t, ...m }) => {
+      const contactId = clientContactIds[0];
+      if (!contactId || m.clientFirstName) return m; // already carries a real name
+      const prev = known.get(m.id);
+      if (prev && (prev.first !== '' || prev.last !== m.clientLastName)) {
+        return { ...m, clientFirstName: prev.first, clientLastName: prev.last };
+      }
+      needName.push({ id: m.id, contactId, open: m.status === 'Open' });
+      return m;
+    });
     await this.upsert(schema.matters, withIds(matterList).map(toMatterRow));
     counts['matters'] = matterList.length;
 
@@ -414,8 +456,29 @@ export class SyncWorker {
     counts['events'] = eventList.length;
 
     // The docket is usable from here on — record the cursors now so a crash
-    // or restart during the long per-matter walk doesn't start from zero.
+    // or restart during the long per-matter walks doesn't start from zero.
     for (const type of ['matters', 'tasks', 'events']) await this.setCursor(type, startedAt);
+
+    // Client names: one /contacts call per matter, open matters first. If
+    // the app cannot read contacts at all, stop asking — titles stand in.
+    needName.sort((a, b) => Number(b.open) - Number(a.open));
+    let named = 0;
+    let misses = 0;
+    for (const [i, n] of needName.entries()) {
+      this.setProgress('full', 'client names', i, needName.length);
+      const name = await this.client.clientNameFor(n.contactId);
+      if (name) {
+        named++;
+        misses = 0;
+        await this.db
+          .update(schema.matters)
+          .set({ clientFirstName: name.firstName, clientLastName: name.lastName })
+          .where(eq(schema.matters.id, n.id));
+      } else if (++misses >= 5 && named === 0) {
+        break;
+      }
+    }
+    counts['clientNames'] = named;
 
     // Per-matter resources (open matters only — closed matters keep their
     // last-synced rows).

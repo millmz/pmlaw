@@ -208,6 +208,25 @@ describe('the board on a tenant that looks nothing like the demo', () => {
     expect(downloads).toBe(d + 1);
   });
 
+  it('a package document alone (no folder, no injury type, no notes) puts a matter on the board', async () => {
+    const m = (await db.select().from(schema.matters)).find((x) => x.status === 'Open' && x.id === 'm-vasquez') ??
+      (await db.select().from(schema.matters)).find((x) => x.status === 'Open' && !['m-grasso', 'm-fontana', 'm-ricci', 'm-bailey', 'm-okafor', 'm-tran', 'm-hughes', 'm-petrov', 'm-keller'].includes(x.id))!;
+    await db.update(schema.matters).set({ matterTypeId: 'mt-none' }).where(eq(schema.matters.id, m.id));
+    await db.insert(schema.files).values({
+      id: 'f-loose-pkg',
+      matterId: m.id,
+      name: 'Settlement  Package - final.pdf',
+      sizeBytes: 1000,
+      dateCreated: '2026-07-01T12:00:00.000Z',
+      dateModified: '2026-07-01T12:00:00.000Z',
+    });
+    clearSettlementCache();
+    const board = await buildSettlementBoard(db, client, GOLDEN_ANCHOR_ISO);
+    const row = board.find((s) => s.matterId === m.id)!;
+    expect(row.status).toBe('prepared_unverified');
+    await db.delete(schema.files).where(eq(schema.files.id, 'f-loose-pkg'));
+  });
+
   it('a cold board never hangs the caller: partial now, complete shortly', async () => {
     clearSettlementCache();
     await db.delete(schema.derived);

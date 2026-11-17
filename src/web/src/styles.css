@@ -270,12 +270,24 @@ input, select { font: inherit; }
 .sync-banner-meta { margin-top: 4px; font-size: 12.5px; color: var(--ink-3); letter-spacing: 0.02em; }
 .sync-bar { margin-top: 10px; height: 4px; background: color-mix(in srgb, var(--warn) 18%, transparent); border-radius: 2px; overflow: hidden; }
 .sync-bar span { display: block; height: 100%; background: var(--warn); transition: width 0.6s ease; }
-@media (max-width: 640px) { .sync-banner { padding: 12px 16px; } .asof-demo { display: none; } }
-.ts-toggle {
+@media (max-width: 640px) {
+  .sync-banner { padding: 12px 16px; }
+  .asof-demo { display: none; }
+  /* A phone's header has room for the title, the controls, and a status
+     light — the words come back whenever the light is not green. */
+  .topbar { gap: 8px; padding-left: 14px; padding-right: 14px; }
+  .topbar h1 { font-size: 16px; letter-spacing: 0.12em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+  .ts-toggle, .flag-btn { padding: 5px 9px; font-size: 13px; flex: none; }
+  .trial-badge { padding: 5px 7px; letter-spacing: 0.14em; flex: none; }
+  .trial-badge .long { display: none; }
+  .asof { flex: none; gap: 6px; }
+  .asof-ok .asof-label { display: none; }
+}
+.ts-toggle, .flag-btn {
   border: 1px solid var(--line); background: transparent; border-radius: 2px;
   padding: 6px 13px; font-family: var(--display); color: var(--ink-2); font-size: 14px; letter-spacing: 0.05em;
 }
-.ts-toggle:hover { border-color: var(--brass); color: var(--ink); }
+.ts-toggle:hover, .flag-btn:hover { border-color: var(--brass); color: var(--ink); }
 .ts-toggle[aria-pressed='true'] { border-color: var(--brass); color: var(--brass); background: color-mix(in srgb, var(--brass) 8%, transparent); }
 
 /* ─────────────────────────────────────────────────────── paper sections */
@@ -637,3 +649,52 @@ table.data td { padding: 10px 12px; border-bottom: 1px solid var(--line-soft); v
     font-size: 12px; line-height: 1.7;
   }
 }
+
+/* ───────────────────────────────────────────── first-showing touches */
+.brief-btn {
+  margin-top: 16px; display: inline-flex; align-items: center; gap: 10px;
+  font: 500 12.5px/1 var(--display); letter-spacing: 0.24em; text-transform: uppercase;
+  color: #f6e8d8; background: var(--oxblood-solid); border: 1px solid var(--oxblood-solid);
+  padding: 12px 20px 12px 14px; border-radius: 2px; cursor: pointer;
+  transition: transform 0.12s ease, box-shadow 0.12s ease;
+}
+.brief-btn:hover { transform: translateY(-1px); box-shadow: 0 4px 14px color-mix(in srgb, var(--oxblood-solid) 30%, transparent); }
+.brief-btn:focus-visible { outline: 2px solid var(--brass); outline-offset: 3px; }
+.brief-orb {
+  width: 14px; height: 14px; border-radius: 50%;
+  background: radial-gradient(circle at 35% 30%, #fff3d6, var(--brass) 55%, #7a5a1e);
+  box-shadow: 0 0 10px color-mix(in srgb, var(--brass) 70%, transparent);
+  animation: brief-breathe 3.2s ease-in-out infinite;
+}
+@keyframes brief-breathe { 0%, 100% { transform: scale(0.88); opacity: 0.85; } 50% { transform: scale(1.08); opacity: 1; } }
+@media (prefers-reduced-motion: reduce) { .brief-orb { animation: none; } .brief-btn { transition: none; } }
+
+.orb-starters { display: flex; flex-wrap: wrap; gap: 10px; justify-content: center; padding: 6px 0 4px; }
+.orb-starter {
+  font: 400 14px/1.2 var(--sans); color: rgba(244, 236, 220, 0.86);
+  background: rgba(244, 236, 220, 0.05); border: 1px solid rgba(201, 162, 77, 0.38);
+  padding: 10px 16px; border-radius: 999px; cursor: pointer;
+  transition: background 0.15s ease, border-color 0.15s ease;
+}
+.orb-starter:hover, .orb-starter:focus-visible { background: rgba(201, 162, 77, 0.16); border-color: rgba(201, 162, 77, 0.8); outline: none; }
+
+.flag-scrim {
+  position: fixed; inset: 0; z-index: 80; background: rgba(20, 8, 10, 0.55);
+  display: flex; align-items: center; justify-content: center; padding: 16px;
+}
+.flag-card {
+  width: min(460px, 100%); background: var(--paper); color: var(--ink); border: 1px solid var(--line);
+  border-top: 3px solid var(--oxblood-solid); border-radius: 2px; padding: 22px 22px 18px;
+  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.35); text-align: left; letter-spacing: normal; text-transform: none;
+  font: 400 15px/1.5 var(--sans);
+}
+.flag-card h3 { margin: 0 0 6px; font: 400 19px/1.2 var(--display); letter-spacing: 0.08em; text-transform: uppercase; }
+.flag-card p { margin: 0 0 12px; color: var(--ink-3); font-size: 14px; }
+.flag-card textarea {
+  width: 100%; box-sizing: border-box; font: inherit; color: var(--ink); background: var(--paper-warm);
+  border: 1px solid var(--line); border-radius: 2px; padding: 10px 12px; resize: vertical;
+}
+.flag-card textarea:focus { outline: 2px solid var(--brass); outline-offset: 1px; }
+.flag-actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 12px; }
+.flag-err { color: var(--alert); font-size: 13.5px; margin-top: 8px; }
+.flag-sent { padding: 18px 0; text-align: center; font-size: 16px; }

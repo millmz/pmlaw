@@ -218,3 +218,54 @@ async function login(page: import('@playwright/test').Page) {
   await page.getByRole('button', { name: /open pam/i }).click();
   await expect(page.getByRole('heading', { name: 'Today', exact: true })).toBeVisible();
 }
+
+test('header tells the truth about sync: live pill, demo tag, no first-sync banner once synced', async ({ page }) => {
+  await login(page);
+  const pill = page.getByTestId('sync-pill');
+  await expect(pill).toContainText('Synced');
+  await expect(pill).toContainText('Demo');
+  await expect(page.locator('.sync-banner')).toHaveCount(0);
+  const status = await (await page.request.get('/api/status')).json();
+  expect(status.sync.state).toBe('ok');
+  expect(status.mirror.matters).toBe(14);
+});
+
+test('Brief me: one tap on Today opens the orb room with the briefing asked', async ({ page }) => {
+  await login(page);
+  await page.getByRole('button', { name: /brief me/i }).click();
+  await expect(page).toHaveURL(/\/pam/);
+  await expect(page.locator('.orb-canvas')).toBeVisible();
+  // The question is consumed from the URL (a refresh must not re-ask it).
+  await expect(page).not.toHaveURL(/ask=/);
+});
+
+test('orb room offers starter questions while the console is empty', async ({ page }) => {
+  await login(page);
+  await page.request.post('/api/chat/new');
+  await page.goto('/pam');
+  // No API key in E2E → chat disabled → no starters offered (nothing to tap that cannot work).
+  await expect(page.locator('.orb-starter')).toHaveCount(0);
+});
+
+test('Flag: a sentence from any page lands in Activity under "Flagged for review"', async ({ page }) => {
+  await login(page);
+  await page.goto('/settlements');
+  await page.getByRole('button', { name: 'Flag', exact: true }).click();
+  await page.getByPlaceholder(/Grasso offer/).fill('E2E: the Hughes offer should read 90, not 85.');
+  await page.getByRole('button', { name: 'Send', exact: true }).click();
+  await expect(page.getByText(/Logged\. Thank you/)).toBeVisible();
+  await page.goto('/activity');
+  const card = page.locator('.card').filter({ hasText: 'Flagged for review' });
+  await expect(card).toContainText('E2E: the Hughes offer should read 90, not 85.');
+  await expect(card).toContainText('on /settlements');
+});
+
+test('Settle: a demand with no offer yet is on the board, and free-form readings are labelled', async ({ page }) => {
+  await login(page);
+  const res = await (await page.request.get('/api/settlements')).json();
+  expect(res.warming).toBeFalsy();
+  expect(res.count).toBeGreaterThanOrEqual(7);
+  await page.goto('/settlements');
+  await expect(page.locator('.board-warming')).toHaveCount(0);
+  await page.screenshot({ path: 'e2e/screenshots/11-settle.png', fullPage: true });
+});

@@ -208,9 +208,9 @@ async function main() {
       ctx.currentStaffId = resolved;
     }
     // Keep the settlement board warm in the background, so opening the
-    // Settle page is instant instead of a first-read wait. Cheap when
-    // nothing changed (per-matter cache); single-flight inside.
-    if (useReal) {
+    // Settle page is instant instead of a first-read wait. Only when a
+    // sync actually changed something; single-flight inside.
+    if (useReal && worker.takeDirty()) {
       void import('./settlement/engine.js')
         .then(({ getSettlementBoard }) => getSettlementBoard(db, client, ctx.fixedNowIso))
         .catch((e) => console.error('[pam] settlement warm-up failed:', e instanceof Error ? e.message : e));

@@ -110,7 +110,7 @@ export function MatterDetailPage() {
           )}
           <div style={{ display: 'flex', gap: 6, marginTop: 14, flexWrap: 'wrap' }}>
             {TABS.map((t) => (
-              <button key={t} className={`btn ghost`} style={tab === t ? { borderColor: 'var(--gold)', color: 'var(--ink)' } : {}} onClick={() => setTab(t)}>
+              <button key={t} className={`btn ghost`} style={tab === t ? { borderColor: 'var(--brass)', color: 'var(--ink)' } : {}} onClick={() => setTab(t)}>
                 {t}
               </button>
             ))}

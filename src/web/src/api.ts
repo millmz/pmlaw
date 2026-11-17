@@ -93,6 +93,8 @@ export interface Status {
   mirror: { matters: number; tasks: number; events: number; notes: number };
 }
 
+export interface AuditEntry { id: number; at: string; actor: string; action: string; params: unknown; result: string | null }
+
 export const api = {
   status: () => get<Status>('/api/status'),
   me: () => get<Me>('/api/me'),
@@ -104,9 +106,15 @@ export const api = {
   matter: (id: string) => get<MatterOverview>(`/api/matters/${id}`),
   courts: (scope: string) => get<{ events: ApiEvent[] }>(`/api/courts?scope=${scope}`),
   audit: () =>
-    get<{ entries: { id: number; at: string; actor: string; action: string; params: unknown; result: string | null }[] }>(
-      '/api/audit',
-    ),
+    get<{ entries: AuditEntry[]; flags?: AuditEntry[] }>('/api/audit'),
+  flag: async (note: string, context?: string) => {
+    const res = await fetch('/api/feedback', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ note, page: window.location.pathname, ...(context ? { context } : {}) }),
+    });
+    if (!res.ok) throw new Error(((await res.json().catch(() => ({}))) as { error?: string }).error ?? 'Could not send.');
+  },
   login: async (code: string) => {
     const res = await fetch('/api/login', {
       method: 'POST',

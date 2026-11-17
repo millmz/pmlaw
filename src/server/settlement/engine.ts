@@ -1,4 +1,4 @@
-import { eq } from 'drizzle-orm';
+import { eq, inArray, sql } from 'drizzle-orm';
 import { DateTime } from 'luxon';
 import { classifyTask, FIRM_TZ } from '../../core/dates.js';
 import type { SmokeballClient } from '../../smokeball/client.js';
@@ -274,7 +274,7 @@ export function clearSettlementCache(): void {
   analysisCache.clear();
 }
 
-type Row<T extends keyof typeof schema & ('matters' | 'events' | 'memos' | 'folders' | 'files' | 'tasks' | 'staff')> =
+type Row<T extends keyof typeof schema & ('matters' | 'matterTypes' | 'events' | 'memos' | 'folders' | 'files' | 'tasks' | 'staff')> =
   (typeof schema)[T]['$inferSelect'];
 
 interface AnalysisInputs {
@@ -608,14 +608,23 @@ function startBoard(db: Db, client: SmokeballClient, nowIso?: string): BoardRun 
   const run: BoardRun = { promise: Promise.resolve([]), partial: [], done: 0, total: 0 };
   run.promise = (async () => {
     const now = nowIso ? DateTime.fromISO(nowIso) : DateTime.now();
-    // One read of each table, grouped in memory — not five queries a matter.
+    // Find the candidates from light reads, then analyze them in chunks —
+    // a firm's file table runs to hundreds of thousands of rows (every
+    // email), and must never be held in memory whole.
     const open = (await db.select().from(schema.matters)).filter((m) => m.status === 'Open');
-    const types = new Map((await db.select().from(schema.matterTypes)).map((t) => [t.id, t]));
+    const typeIds = [...new Set(open.map((m) => m.matterTypeId).filter(Boolean))];
+    const types = new Map<string, Row<'matterTypes'>>();
+    for (let i = 0; i < typeIds.length; i += 500) {
+      for (const t of await db.select().from(schema.matterTypes).where(inArray(schema.matterTypes.id, typeIds.slice(i, i + 500)))) types.set(t.id, t);
+    }
     const memos = groupBy(await db.select().from(schema.memos));
     const folders = groupBy(await db.select().from(schema.folders));
-    const files = groupBy(await db.select().from(schema.files));
-    const tasks = groupBy(await db.select().from(schema.tasks));
-    const events = groupBy(await db.select().from(schema.events));
+    const pkgFiles = groupBy(
+      await db
+        .select({ matterId: schema.files.matterId, name: schema.files.name })
+        .from(schema.files)
+        .where(sql`${schema.files.name} ~* ${PACKAGE_RE.source}`),
+    );
     const staff = await db.select().from(schema.staff);
     const candidates = open.filter((m) => {
       const t = types.get(m.matterTypeId);
@@ -624,30 +633,38 @@ function startBoard(db: Db, client: SmokeballClient, nowIso?: string): BoardRun 
         typeCategory: t?.category ?? '',
         noteTexts: (memos.get(m.id) ?? []).map((x) => x.text),
         folderNames: (folders.get(m.id) ?? []).map((x) => x.name),
-        fileNames: (files.get(m.id) ?? []).map((x) => x.name),
+        fileNames: (pkgFiles.get(m.id) ?? []).map((x) => x.name),
       });
     });
     run.total = candidates.length;
-    for (const m of candidates) {
-      try {
-        const s = await analyzeCached({
-          db,
-          client,
-          matter: m,
-          now,
-          events: events.get(m.id) ?? [],
-          memos: memos.get(m.id) ?? [],
-          folders: folders.get(m.id) ?? [],
-          files: files.get(m.id) ?? [],
-          tasks: tasks.get(m.id) ?? [],
-          staff,
-        });
-        if (s && s.status !== 'no_package') run.partial.push(s);
-      } catch (e) {
-        // One unreadable matter must not blank the board.
-        console.error(`[pam] settlement analysis failed for one matter:`, e instanceof Error ? e.message.slice(0, 160) : e);
+    const CHUNK = 40;
+    for (let i = 0; i < candidates.length; i += CHUNK) {
+      const chunk = candidates.slice(i, i + CHUNK);
+      const ids = chunk.map((m) => m.id);
+      const files = groupBy(await db.select().from(schema.files).where(inArray(schema.files.matterId, ids)));
+      const tasks = groupBy(await db.select().from(schema.tasks).where(inArray(schema.tasks.matterId, ids)));
+      const events = groupBy(await db.select().from(schema.events).where(inArray(schema.events.matterId, ids)));
+      for (const m of chunk) {
+        try {
+          const s = await analyzeCached({
+            db,
+            client,
+            matter: m,
+            now,
+            events: events.get(m.id) ?? [],
+            memos: memos.get(m.id) ?? [],
+            folders: folders.get(m.id) ?? [],
+            files: files.get(m.id) ?? [],
+            tasks: tasks.get(m.id) ?? [],
+            staff,
+          });
+          if (s && s.status !== 'no_package') run.partial.push(s);
+        } catch (e) {
+          // One unreadable matter must not blank the board.
+          console.error(`[pam] settlement analysis failed for one matter:`, e instanceof Error ? e.message.slice(0, 160) : e);
+        }
+        run.done++;
       }
-      run.done++;
     }
     return rank(run.partial);
   })().finally(() => {

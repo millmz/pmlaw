@@ -1,7 +1,8 @@
 import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { Link } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import { fmtTime, type ApiEvent, type ApiTask } from '../api.js';
+import { primeAudio } from '../voice.js';
 
 /**
  * Today v2 — Jeff's design (docs/10): one day at a time, big. "Today" plus
@@ -59,6 +60,14 @@ export function TodayPage() {
     refetchInterval: 60_000,
   });
 
+  const navigate = useNavigate();
+  const briefMe = () => {
+    // The tap is the gesture that lets her speak (iPhone) — bless audio
+    // here, then hand the question to the orb.
+    primeAudio();
+    navigate(`/pam?ask=${encodeURIComponent('Brief me on today.')}`);
+  };
+
   const tabs = data ? weekdayTabs(data.todayIso) : [];
   const active = selected ?? data?.todayIso;
 
@@ -69,6 +78,10 @@ export function TodayPage() {
           <div className="firmline">Phillips &amp; Millman · Daily Docket</div>
           <h2 className="docket-date">{data.label.replace('Today — ', '')}</h2>
           <div className="double-rule" />
+          <button type="button" className="brief-btn" onClick={briefMe} title="PAM reads you the day: court, deadlines, what needs a decision">
+            <span className="brief-orb" aria-hidden="true" />
+            Brief me
+          </button>
         </header>
       )}
       {tabs.length > 0 && (

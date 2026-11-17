@@ -76,10 +76,10 @@ describe('sync hardening (production scale)', () => {
 
   it('never runs two syncs at once: an incremental during a full is skipped; a second full waits', async () => {
     const client = newClient();
-    const real = client.listMatters.bind(client);
+    const real = client.listMattersAdapted.bind(client);
     let inFlight = 0;
     let maxInFlight = 0;
-    client.listMatters = async (p = {}) => {
+    client.listMattersAdapted = async (p = {}) => {
       inFlight++;
       maxInFlight = Math.max(maxInFlight, inFlight);
       await new Promise((r) => setTimeout(r, 30));
@@ -134,5 +134,47 @@ describe('sync hardening (production scale)', () => {
     // …and the rolling refresh touched a few open matters too.
     expect(seen.length).toBeGreaterThan(1);
     expect(seen.length).toBeLessThanOrEqual(5);
+  });
+});
+
+describe('first sync at firm scale: the docket never waits on client names', () => {
+  it('matters land under their title first; names fill in after tasks and calendar; resolved names survive a re-sync', async () => {
+    const opened = await openDb();
+    const client = newClient();
+    const order: string[] = [];
+    const raw = [
+      { id: 'mx-1', number: '25-0001', status: 'Open', title: 'Abbott v. Acme', clientContactIds: ['c-1'], clientFirstName: '', clientLastName: 'Abbott v. Acme', matterTypeId: '', description: '', createdAt: '2025-01-01T00:00:00Z', updatedAt: '2025-01-01T00:00:00Z' },
+      { id: 'mx-2', number: '25-0002', status: 'Closed', title: 'Old matter', clientContactIds: ['c-2'], clientFirstName: '', clientLastName: 'Old matter', matterTypeId: '', description: '', createdAt: '2025-01-01T00:00:00Z', updatedAt: '2025-01-01T00:00:00Z' },
+    ];
+    client.listMattersAdapted = async () => {
+      order.push('matters');
+      return structuredClone(raw) as never;
+    };
+    const tasks = client.listTasks.bind(client);
+    client.listTasks = async (p = {}) => {
+      order.push('tasks');
+      return tasks(p);
+    };
+    let lookups = 0;
+    client.clientNameFor = async (id: string) => {
+      order.push(`name:${id}`);
+      lookups++;
+      return id === 'c-1' ? { firstName: 'Alan', lastName: 'Abbott' } : null;
+    };
+    const worker = new SyncWorker(opened.db, client);
+    const counts = await worker.fullSync();
+    expect(order.indexOf('matters')).toBeLessThan(order.indexOf('tasks'));
+    expect(order.indexOf('tasks')).toBeLessThan(order.indexOf('name:c-1'));
+    expect(order.indexOf('name:c-1')).toBeLessThan(order.indexOf('name:c-2')); // open matters first
+    expect(counts['clientNames']).toBe(1);
+    const row = async (id: string) => (await opened.db.select().from(schema.matters).where(eq(schema.matters.id, id)))[0]!;
+    expect((await row('mx-1')).clientLastName).toBe('Abbott');
+    expect((await row('mx-2')).clientLastName).toBe('Old matter'); // unreadable contact → title stands in
+    // A later full sync keeps the resolved name and does not ask again for it.
+    lookups = 0;
+    await worker.fullSync();
+    expect((await row('mx-1')).clientFirstName).toBe('Alan');
+    expect(lookups).toBe(1); // only the still-unnamed one
+    await opened.close();
   });
 });
