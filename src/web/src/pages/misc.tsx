@@ -23,6 +23,16 @@ interface BoardRow {
   followUp?: { subject: string; dueDate?: string; state: string };
   lastNegotiationAt?: string;
   lastNegotiationBy?: string;
+  /** Fields PAM read out of free-form notes (not the labelled format). */
+  interpreted?: string[];
+}
+
+interface BoardData {
+  count: number;
+  matters: BoardRow[];
+  warming?: boolean;
+  progress?: { done: number; total: number };
+  error?: string;
 }
 
 const STATUS_LABELS: Record<string, { label: string; cls: string }> = {
@@ -31,6 +41,7 @@ const STATUS_LABELS: Record<string, { label: string; cls: string }> = {
   sent_verified: { label: 'Sent · awaiting response', cls: 'warn' },
   prepared_unverified: { label: 'Prepared · sending unverified', cls: 'info' },
   ready_in_suit: { label: 'Ready — in suit', cls: 'warn' },
+  demand_made: { label: 'Demand made · no offer yet', cls: 'info' },
 };
 
 export function SettlementsPage() {
@@ -40,8 +51,11 @@ export function SettlementsPage() {
       const res = await fetch('/api/settlements');
       if (res.status === 401) { window.location.href = '/login'; throw new Error('unauthenticated'); }
       if (!res.ok) throw new Error('failed');
-      return res.json() as Promise<{ count: number; matters: BoardRow[] }>;
+      return res.json() as Promise<BoardData>;
     },
+    // A cold board on a large firm is worked out in the background — show
+    // what is ready and keep asking until it is whole.
+    refetchInterval: (q) => (q.state.data?.warming ? 4000 : false),
   });
 
   return (
@@ -54,6 +68,14 @@ export function SettlementsPage() {
         </div>
         <div className="card-body">
           {isLoading && <div className="skeleton" style={{ height: 120 }} />}
+          {data?.warming && (
+            <div className="board-warming" role="status">
+              PAM is still reading the firm’s matters
+              {data.progress && data.progress.total > 0 ? ` — ${data.progress.done} of ${data.progress.total} reviewed` : ''}.
+              Cases appear here as they are found.
+            </div>
+          )}
+          {data?.error && <div className="empty">The board could not be built just now: {data.error}</div>}
           {data?.matters.map((row) => (
             <div className="row" key={row.matterId} style={{ flexWrap: 'wrap' }}>
               <span className="grow" style={{ flexBasis: '100%' }}>
@@ -64,6 +86,14 @@ export function SettlementsPage() {
                   <span className={`pill ${STATUS_LABELS[row.status]?.cls ?? 'info'}`}>
                     {STATUS_LABELS[row.status]?.label ?? row.status}
                   </span>
+                  {row.interpreted && row.interpreted.length > 0 && (
+                    <span
+                      className="pill info"
+                      title="These figures were read from free-form notes rather than labelled lines (Demand: / Offer:). Each one appears word-for-word in the notes — open the matter to confirm."
+                    >
+                      Read from notes
+                    </span>
+                  )}
                 </div>
                 <div className="meta" style={{ marginTop: 4 }}>{row.statusReason}</div>
                 <div className="meta" style={{ marginTop: 6, display: 'flex', gap: 14, flexWrap: 'wrap' }}>
@@ -95,8 +125,11 @@ export function SettlementsPage() {
               </span>
             </div>
           ))}
-          {data && data.matters.length === 0 && (
-            <div className="empty">No open PI or med-mal matters with settlement activity.</div>
+          {data && data.matters.length === 0 && !data.warming && !data.error && (
+            <div className="empty">
+              No open matters with settlement activity yet. PAM looks for a Settlement Package folder, and for notes
+              that mention a demand or an offer with a dollar figure.
+            </div>
           )}
         </div>
       </div>

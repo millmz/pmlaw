@@ -150,6 +150,17 @@ export const appSettings = pgTable('app_settings', {
   updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
 });
 
+/** Things PAM worked out from mirrored records and should not have to work
+ *  out again after a restart — per-file settlement signals (was this email
+ *  the package going out?), model-read note facts. Keys carry the source
+ *  record's version, so a changed record simply misses. Derived FROM the
+ *  mirror, so it is wiped with it (clearSyncedData). */
+export const derived = pgTable('derived', {
+  key: text('key').primaryKey(),
+  value: jsonb('value').notNull(),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+});
+
 /** Long-term memory. HARD RULE (privilege): working preferences and firm
  *  process only — never client confidences, case facts, or client identities. */
 export const memories = pgTable('memories', {

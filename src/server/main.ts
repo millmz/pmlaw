@@ -160,6 +160,20 @@ async function main() {
     // Boot-time ping so a dead key is in the log, not in Jeff's first question.
     void checkBrain(PAM_MODEL).then((r) => console.log(`[pam] brain (${PAM_MODEL}): ${r.ok ? 'ok' : 'DOWN — ' + r.detail}`));
   }
+
+  // Settlement engine wiring: a small model reads free-form notes the
+  // labelled parser cannot (every value is verified against the note text),
+  // and the firm's own email domains tell "we sent it" from "they replied".
+  {
+    const { configureSettlement } = await import('./settlement/engine.js');
+    const { llmNoteReader } = await import('./settlement/note-reader.js');
+    const notesModel = process.env['PAM_NOTES_MODEL']?.trim() || 'claude-haiku-5-5';
+    const domains = (process.env['PAM_FIRM_EMAIL_DOMAINS'] ?? '').split(',').map((d) => d.trim().toLowerCase()).filter(Boolean);
+    configureSettlement({
+      noteReader: pamApiKey() && process.env['PAM_NOTES_MODEL'] !== 'off' ? llmNoteReader(await anthropicLlm(notesModel)) : undefined,
+      ...(domains.length ? { firmDomains: domains } : {}),
+    });
+  }
   phase('llm ready');
 
   // Webhook signing key: env wins; otherwise one is generated once and kept
@@ -193,12 +207,24 @@ async function main() {
       console.log(`[pam] current staff resolved to ${resolved}`);
       ctx.currentStaffId = resolved;
     }
+    // Keep the settlement board warm in the background, so opening the
+    // Settle page is instant instead of a first-read wait. Cheap when
+    // nothing changed (per-matter cache); single-flight inside.
+    if (useReal) {
+      void import('./settlement/engine.js')
+        .then(({ getSettlementBoard }) => getSettlementBoard(db, client, ctx.fixedNowIso))
+        .catch((e) => console.error('[pam] settlement warm-up failed:', e instanceof Error ? e.message : e));
+    }
   };
 
-  console.log('[pam] full sync…');
   if (useReal) {
-    worker
-      .fullSync()
+    // A restart must not re-read the whole firm: when the mirror on disk
+    // already matches this source, catch up from the cursors instead. The
+    // full read happens on first run, after a source change, or on demand
+    // (POST /api/sync?full=1).
+    const resume = persistent && (await worker.hasMirror());
+    console.log(resume ? '[pam] mirror present — catching up incrementally…' : '[pam] first full sync…');
+    (resume ? worker.incrementalSync() : worker.fullSync())
       .then(async (c) => {
         console.log('[pam] synced:', c);
         await refreshStaff();
@@ -216,8 +242,9 @@ async function main() {
           console.log('[pam] no public URL known (PAM_PUBLIC_URL / RENDER_EXTERNAL_URL) — webhooks not registered; polling only');
         }
       })
-      .catch((e) => console.error('[pam] full sync failed (server stays up; see /api/smokeball/verify):', e));
+      .catch((e) => console.error('[pam] initial sync failed (server stays up; see /api/smokeball/verify):', e));
   } else {
+    console.log('[pam] full sync…');
     // The mock is local and deterministic — await it so tests and dev see
     // data the moment the port answers. Even here, a failure must not take
     // the port down with it.

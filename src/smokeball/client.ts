@@ -1,3 +1,4 @@
+import { extractText, isUnreadableBinary } from './file-text.js';
 import type {
   CalendarEvent,
   FileRecord,
@@ -62,6 +63,16 @@ interface Paged<T> {
 /** Real Smokeball rejects fractional seconds on date-time filters
  *  (staging 400: "not valid for UpdatedSince") — send second precision. */
 const isoNoMillis = (iso: string): string => iso.replace(/\.\d+(?=(Z|[+-]\d{2}:?\d{2})?$)/, '');
+
+const concat = (chunks: Uint8Array[], total: number): Uint8Array => {
+  const out = new Uint8Array(total);
+  let o = 0;
+  for (const c of chunks) {
+    out.set(c, o);
+    o += c.length;
+  }
+  return out;
+};
 
 export class SmokeballClient {
   private queue: Promise<void> = Promise.resolve();
@@ -210,20 +221,22 @@ export class SmokeballClient {
       return null;
     }
   }
-  async listTasks(params: { updatedSince?: string; matterId?: string } = {}): Promise<Task[]> {
+  async listTasks(params: { updatedSince?: string; matterId?: string; isCompleted?: boolean } = {}): Promise<Task[]> {
     const q = new URLSearchParams();
     if (params.updatedSince) q.set('LastUpdated', isoNoMillis(params.updatedSince));
     if (params.matterId) q.set('MatterId', params.matterId);
+    if (params.isCompleted !== undefined) q.set('IsCompleted', String(params.isCompleted));
     const qs = q.toString();
     return this.present((await this.getAll<Raw>(`/tasks${qs ? `?${qs}` : ''}`)).map(adaptTask));
   }
   async listEvents(params: { updatedSince?: string; from?: string; to?: string } = {}): Promise<CalendarEvent[]> {
     const q = new URLSearchParams();
-    // /events has no LastUpdated; its UpdatedSince accepts ISO *without* zone
-    // ("YYYY-MM-DDThh:mm:ss"), per the spec example.
-    if (params.updatedSince) q.set('UpdatedSince', isoNoMillis(params.updatedSince).replace(/Z$/, ''));
-    if (params.from) q.set('From', params.from);
-    if (params.to) q.set('To', params.to);
+    // /events has no LastUpdated; its date params take ISO *without* zone
+    // ("YYYY-MM-DDThh:mm:ss"), per the spec example — sent as UTC.
+    const zoneless = (iso: string) => new Date(iso).toISOString().replace(/\.\d+Z$/, '');
+    if (params.updatedSince) q.set('UpdatedSince', zoneless(params.updatedSince));
+    if (params.from) q.set('From', zoneless(params.from));
+    if (params.to) q.set('To', zoneless(params.to));
     const qs = q.toString();
     return this.present((await this.getAll<Raw>(`/events${qs ? `?${qs}` : ''}`)).map(adaptEvent));
   }
@@ -239,7 +252,11 @@ export class SmokeballClient {
     const toStaff = (userId: string) => this.userToStaff.get(userId) ?? userId;
     return this.present((await this.getAll<Raw>(`/matters/${matterId}/memos`)).map((r) => adaptMemo(r, toStaff)));
   }
-  async downloadFile(matterId: string, fileId: string): Promise<string> {
+  /** Download a matter file as readable text. Real matters hold binary
+   *  formats (PDF scans, Word, images): the stream is abandoned as soon as
+   *  the first bytes show one, and capped at `maxBytes` regardless. Returns
+   *  '' when there is no trustworthy text. */
+  async downloadFile(matterId: string, fileId: string, maxBytes = 12_000_000): Promise<string> {
     const { downloadUrl } = await this.get<{ downloadUrl: string }>(
       `/matters/${matterId}/documents/files/${fileId}/download`,
     );
@@ -247,7 +264,30 @@ export class SmokeballClient {
     const url = downloadUrl.startsWith('http') ? downloadUrl : `${this.cfg.baseUrl}${downloadUrl}`;
     const res = await this.schedule(() => fetch(url));
     if (!res.ok) throw new Error(`download failed: ${res.status}`);
-    return res.text();
+    if (!res.body) return extractText(new Uint8Array(await res.arrayBuffer()));
+    const reader = res.body.getReader();
+    const chunks: Uint8Array[] = [];
+    let total = 0;
+    let sniffed = false;
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      if (!value?.length) continue;
+      chunks.push(value);
+      total += value.length;
+      if (!sniffed && total >= 8) {
+        sniffed = true;
+        if (isUnreadableBinary(chunks.length === 1 ? value : concat(chunks, total))) {
+          await reader.cancel().catch(() => undefined);
+          return '';
+        }
+      }
+      if (total >= maxBytes) {
+        await reader.cancel().catch(() => undefined);
+        break;
+      }
+    }
+    return extractText(concat(chunks, total));
   }
   async searchFiles(query: string, matterIds?: string[]): Promise<{ value: FileRecord[] }> {
     const res = await this.request<{ value?: Raw[] } | Raw[]>('POST', '/search/files', {

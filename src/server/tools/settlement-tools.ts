@@ -1,6 +1,6 @@
 import { z } from 'zod';
-import { buildSettlementBoard, analyzeMatter } from '../settlement/engine.js';
-import type { ToolDef } from './types.js';
+import { getSettlementBoard as loadBoard, analyzeMatter } from '../settlement/engine.js';
+import type { ToolContext, ToolDef, ToolResult } from './types.js';
 
 /** Settlement tools — chat and the Settlements page share these, so the
  *  board and the conversation can never disagree. */
@@ -12,16 +12,31 @@ const boardSchema = z.object({
 const getSettlementBoard: ToolDef = {
   name: 'get_settlement_board',
   description:
-    'The settlement status board: every open PI/med-mal matter with settlement activity, ranked by most recent negotiation. Each row: status (with reason), insurer, adjuster name/email/phone, claim number, policy limits, liens, demand, current offer (+date/by), injuries, follow-up task state, who negotiated last, and full citations. Use for "what am I negotiating", "top five cases", "which packages need follow-up". NEVER claim a package was sent unless status is sent_verified/sent_acknowledged — prepared_unverified means sending could not be verified (may have gone by mail).',
+    'The settlement status board: every open matter with settlement activity, ranked by most recent negotiation. Each row: status (with reason; demand_made = a demand is noted but no offer yet), insurer, adjuster name/email/phone, claim number, policy limits, liens, demand, current offer (+date/by), injuries, follow-up task state, who negotiated last, and full citations. Use for "what am I negotiating", "top five cases", "which packages need follow-up". NEVER claim a package was sent unless status is sent_verified/sent_acknowledged — prepared_unverified means sending could not be verified (may have gone by mail). A row with `interpreted` fields had those values read from free-form notes rather than labelled ones — say "per the notes" for them.',
   paramsSchema: boardSchema,
-  run: async (ctx, raw) => {
-    const p = boardSchema.parse(raw);
+  run: async (ctx, raw) => settlementBoardResult(ctx, boardSchema.parse(raw).limit, 40_000),
+};
+
+/** Shared by the chat tool and the Settle page (which waits less and polls). */
+export async function settlementBoardResult(ctx: ToolContext, limit: number | undefined, maxWaitMs: number): Promise<ToolResult> {
+  {
+    const p = { limit };
     if (!ctx.smokeball) throw new Error('settlement analysis unavailable: no Smokeball connection');
-    const board = await buildSettlementBoard(ctx.db, ctx.smokeball, ctx.fixedNowIso);
+    // Never hang a conversation (or the page) on a cold first read of a big
+    // firm: past the wait, answer with what is ready and say it is partial.
+    const res = await loadBoard(ctx.db, ctx.smokeball, ctx.fixedNowIso, maxWaitMs);
+    const board = res.summaries;
     const rows = p.limit ? board.slice(0, p.limit) : board;
     return {
       data: {
         count: rows.length,
+        ...(res.warming
+          ? {
+              warming: true,
+              progress: { done: res.done, total: res.total },
+              note: `PARTIAL: PAM is still reading the firm's matters (${res.done} of ${res.total} analyzed). Say so plainly and offer to check again in a few minutes — do not present this as the complete list.`,
+            }
+          : {}),
         matters: rows.map((s) => ({
           matterId: s.matterId,
           matter: s.matterLabel,
@@ -38,8 +53,8 @@ const getSettlementBoard: ToolDef = {
       citations: rows.flatMap((s) => s.citations),
       asOf: new Date().toISOString(),
     };
-  },
-};
+  }
+}
 
 const timelineSchema = z.object({
   matterId: z.string().describe('Matter id from search_matters or the board.'),

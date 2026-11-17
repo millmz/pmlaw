@@ -2,7 +2,7 @@ import Fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest }
 import fastifyCookie from '@fastify/cookie';
 import fastifyStatic from '@fastify/static';
 import { createHmac, randomUUID, timingSafeEqual } from 'node:crypto';
-import { desc, eq } from 'drizzle-orm';
+import { desc, eq, sql } from 'drizzle-orm';
 import { existsSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -108,13 +108,26 @@ export function buildApp(deps: AppDeps): FastifyInstance {
     return { ok: true };
   });
 
-  app.get('/api/me', async (req) => ({
-    authed: authed(req),
-    gated: Boolean(accessCode),
-    chatEnabled: Boolean(deps.llm),
-    writesEnabled: ctx.writesEnabled !== false,
-    user: { name: 'Jeff Millman', initials: 'JTM', staffId: ctx.currentStaffId },
-  }));
+  app.get('/api/me', async (req) => {
+    // The signed-in lawyer, from the mirror once it knows who that is. Only
+    // revealed past the access gate; the fallback is the firm's public name.
+    let user = { name: 'Jeff Millman', initials: 'JTM', staffId: ctx.currentStaffId };
+    if (authed(req)) {
+      const row = await ctx.db.query.staff.findFirst({ where: eq(schema.staff.id, ctx.currentStaffId) }).catch(() => undefined);
+      const name = row ? `${row.firstName ?? ''} ${row.lastName ?? ''}`.trim() : '';
+      if (row && name) {
+        const initials = (row.initials || name.split(/\s+/).map((w) => w[0]).join('')).toUpperCase().slice(0, 3);
+        user = { name, initials, staffId: row.id };
+      }
+    }
+    return {
+      authed: authed(req),
+      gated: Boolean(accessCode),
+      chatEnabled: Boolean(deps.llm),
+      writesEnabled: ctx.writesEnabled !== false,
+      user,
+    };
+  });
 
   // ------------------------------------------------------------------ data
   app.get('/api/today', async () => getTodayData(ctx));
@@ -315,8 +328,14 @@ export function buildApp(deps: AppDeps): FastifyInstance {
   });
 
   app.get('/api/settlements', async () => {
-    const result = await runTool(ctx, 'get_settlement_board', {});
-    return result.data;
+    // The page gets what is ready within a few seconds and polls while
+    // `warming` — a cold board on a big firm takes minutes, not a spinner.
+    const { settlementBoardResult } = await import('./tools/settlement-tools.js');
+    try {
+      return (await settlementBoardResult(ctx, undefined, 5000)).data;
+    } catch (e) {
+      return { count: 0, matters: [], error: String(e instanceof Error ? e.message : e).slice(0, 200) };
+    }
   });
 
   app.get('/api/audit', async () => {
@@ -328,9 +347,44 @@ export function buildApp(deps: AppDeps): FastifyInstance {
     return { entries: rows };
   });
 
-  app.post('/api/sync', async () => {
+  /** Pull now. `?full=1` re-reads everything (runs in the background — a
+   *  real firm takes minutes; watch /api/status for progress). */
+  app.post('/api/sync', async (req) => {
+    const { full } = req.query as { full?: string };
+    if (full === '1' || full === 'true') {
+      if (worker.busy) return { ok: true, started: false, note: 'a sync is already running', progress: worker.progress };
+      worker.fullSync().catch((e) => console.error('[pam] manual full sync failed:', e instanceof Error ? e.message : e));
+      return { ok: true, started: true };
+    }
     const counts = await worker.incrementalSync();
     return { ok: true, counts };
+  });
+
+  /** Live state for the header pill and the first-sync banner. Cheap: the UI
+   *  polls it. */
+  app.get('/api/status', async () => {
+    const count = async (t: typeof schema.matters | typeof schema.tasks | typeof schema.events | typeof schema.memos) =>
+      Number((await ctx.db.select({ n: sql<number>`count(*)` }).from(t))[0]?.n ?? 0);
+    const mirror = {
+      matters: await count(schema.matters),
+      tasks: await count(schema.tasks),
+      events: await count(schema.events),
+      notes: await count(schema.memos),
+    };
+    const last = worker.lastSync;
+    const state = worker.firstRun ? 'first-sync' : worker.busy && worker.progress?.kind === 'full' ? 'syncing' : last && !last.ok ? 'error' : worker.lastOkAt ? 'ok' : 'starting';
+    return {
+      mode: ctx.fixedNowIso ? 'demo' : 'live',
+      writesEnabled: ctx.writesEnabled !== false,
+      sync: {
+        state,
+        progress: worker.progress,
+        lastOkAt: worker.lastOkAt,
+        lastError: last && !last.ok ? last.error : null,
+        warnings: last?.warnings ?? [],
+      },
+      mirror,
+    };
   });
 
   // Shape-only sample of what the REAL tenant sends — field names and types,

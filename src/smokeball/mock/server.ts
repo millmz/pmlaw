@@ -187,11 +187,11 @@ export function createMockSmokeball(data: FirmDataset, opts: MockOptions = {}): 
     const q = req.query as Record<string, unknown>;
     let items = data.events;
     if (typeof q['From'] === 'string') {
-      const from = DateTime.fromISO(q['From'] as string);
+      const from = DateTime.fromISO(q['From'] as string, { zone: 'utc' });
       items = items.filter((e) => DateTime.fromISO(e.startTime) >= from);
     }
     if (typeof q['To'] === 'string') {
-      const to = DateTime.fromISO(q['To'] as string);
+      const to = DateTime.fromISO(q['To'] as string, { zone: 'utc' });
       items = items.filter((e) => DateTime.fromISO(e.startTime) <= to);
     }
     if (typeof q['MatterId'] === 'string') items = items.filter((e) => e.matterId === q['MatterId']);

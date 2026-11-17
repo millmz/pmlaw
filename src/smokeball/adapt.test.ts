@@ -148,3 +148,28 @@ describe('write DTOs', () => {
     expect(adaptStaff({ id: 's', isDeleted: true })).toBeNull();
   });
 });
+
+describe('matter custom fields, wherever the tenant keeps them', () => {
+  const base = { id: 'm1', number: '24-0001', status: 'Open', clients: [], openedDate: '2024-01-02T00:00:00Z' };
+  it('finds statute date, date of loss and in-suit by key name, nested or listed', async () => {
+    const { adaptMatter } = await import('./adapt.js');
+    const nested = adaptMatter({
+      ...base,
+      items: { 'Personal Injury Details': { 'Date of Accident': '2023-03-04T00:00:00', 'Statute of Limitations': '3/4/2026', notes: 'statute discussed with client' } },
+    })!;
+    expect(nested.dateOfLoss).toBe('2023-03-04');
+    expect(nested.statuteDate).toBe('2026-03-04');
+    const listed = adaptMatter({
+      ...base,
+      items: [{ name: 'SOL Date', value: '2027-01-15' }, { name: 'Index Number', value: '034512/2025' }, { name: 'Statute Notes', value: 'N/A' }],
+    })!;
+    expect(listed.statuteDate).toBe('2027-01-15');
+    expect(listed.isInSuit).toBe(true);
+  });
+  it('never invents a date from free text, and an empty index number is not "in suit"', async () => {
+    const { adaptMatter } = await import('./adapt.js');
+    const m = adaptMatter({ ...base, items: { statuteDate2: 'TBD', 'Index No': '', limitationNote: 'check with JTM' } })!;
+    expect(m.statuteDate).toBeUndefined();
+    expect(m.isInSuit).toBeUndefined();
+  });
+});

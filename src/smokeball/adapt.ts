@@ -50,6 +50,19 @@ const dateOnly = (v: unknown): string | undefined => {
   const s = str(v);
   return s ? s.slice(0, 10) : undefined;
 };
+/** A real calendar date or nothing — for values found by key-name search,
+ *  where "N/A" or a free-text note must not pass as a date. */
+const strictDate = (v: unknown): string | undefined => {
+  const s = str(v)?.trim();
+  if (!s) return undefined;
+  if (/^\d{4}-\d{2}-\d{2}/.test(s)) return DateTime.fromISO(s.slice(0, 10)).isValid ? s.slice(0, 10) : undefined;
+  const us = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+  if (us) {
+    const d = DateTime.fromObject({ year: Number(us[3]), month: Number(us[1]), day: Number(us[2]) });
+    return d.isValid ? d.toISODate()! : undefined;
+  }
+  return undefined;
+};
 const nowIso = () => DateTime.utc().toISO()!;
 
 /** True when a record is already in PAM's core shape (mock passthrough / tests). */
@@ -145,15 +158,53 @@ export interface AdaptedMatter extends Matter {
   clientContactIds: string[];
   title?: string;
 }
+/** First value under a key matching `key` (searched a few levels deep) that
+ *  `read` accepts. Layout/custom data is nested differently per tenant. */
+export function findItem<T>(node: unknown, key: RegExp, read: (v: unknown) => T | undefined, depth = 0): T | undefined {
+  if (!node || typeof node !== 'object' || depth > 4) return undefined;
+  const entries: [string, unknown][] = Array.isArray(node)
+    ? node.flatMap((n) => {
+        // [{ name|key|label: 'Statute Date', value: '…' }] — a common layout shape.
+        const o = n as Raw;
+        const k = o && typeof o === 'object' ? (str(o['name']) ?? str(o['key']) ?? str(o['label'])) : undefined;
+        return k !== undefined && 'value' in o ? [[k, o['value']] as [string, unknown]] : [['', n] as [string, unknown]];
+      })
+    : Object.entries(node as Raw);
+  for (const [k, v] of entries) {
+    if (k && key.test(k)) {
+      const got = read(v);
+      if (got !== undefined) return got;
+    }
+  }
+  for (const [, v] of entries) {
+    if (v && typeof v === 'object') {
+      const got = findItem(v, key, read, depth + 1);
+      if (got !== undefined) return got;
+    }
+  }
+  return undefined;
+}
+
 export function adaptMatter(raw: Raw): AdaptedMatter | null {
   if (raw['isDeleted'] === true) return null;
   if (isCore(raw, 'clientLastName', 'clients')) return { ...(raw as unknown as Matter), clientContactIds: [] };
   const opened = str(raw['openedDate']) ?? nowIso();
   const items = (raw['items'] ?? {}) as Raw; // layout/custom data — key names to confirm on live data
   const title = str(raw['title']);
-  const dateOfLoss = dateOnly(items['dateOfLoss'] ?? items['DateOfLoss']);
-  const statuteDate = dateOnly(items['statuteDate'] ?? items['StatuteOfLimitations']);
-  const isInSuit = items['isInSuit'];
+  // Exact keys first; then a search by key NAME through the layout data —
+  // each tenant's layouts name these fields in their own words.
+  const dateOfLoss =
+    dateOnly(items['dateOfLoss'] ?? items['DateOfLoss']) ??
+    findItem(items, /date.?of.?(loss|accident|incident|injury|occurrence)|(accident|incident|loss|injury).?date|^dol\b/i, strictDate);
+  const statuteDate =
+    dateOnly(items['statuteDate'] ?? items['StatuteOfLimitations']) ??
+    findItem(items, /statute|limitation|^sol\b|^sol.?date/i, strictDate);
+  const isInSuit: unknown =
+    typeof items['isInSuit'] === 'boolean'
+      ? items['isInSuit']
+      : findItem(items, /in.?suit|suit.?filed|index.?(no|num)|date.?(suit.?)?filed|docket.?(no|num)/i, (v) =>
+          v === true || (typeof v === 'string' && v.trim() !== '' && !/^(no|false|n\/a|none)$/i.test(v.trim())) ? true : undefined,
+        );
   return {
     id: String(raw['id']),
     number: str(raw['number']) ?? String(raw['id']).slice(0, 8),

@@ -1,4 +1,4 @@
-import { eq, getTableColumns, sql } from 'drizzle-orm';
+import { and, eq, getTableColumns, notInArray, sql } from 'drizzle-orm';
 import { DateTime } from 'luxon';
 import type { SmokeballClient } from '../../smokeball/client.js';
 import { adaptEvent, adaptMatter, adaptMemo, adaptTask } from '../../smokeball/adapt.js';
@@ -40,6 +40,7 @@ export async function clearSyncedData(db: Db): Promise<void> {
   await db.delete(schema.matterTypes);
   await db.delete(schema.staff);
   await db.delete(schema.syncState);
+  await db.delete(schema.derived);
 }
 
 /**
@@ -154,16 +155,53 @@ export interface SyncStatus {
   ok: boolean;
   error?: string;
   counts?: Record<string, number>;
+  /** Non-fatal problems (e.g. a per-matter resource the app lacks a scope for). */
+  warnings?: string[];
 }
+
+export interface SyncProgress {
+  kind: 'full' | 'incremental';
+  phase: string;
+  done: number;
+  total: number;
+  startedAt: string;
+}
+
+type PerMatterKind = 'memos' | 'files' | 'folders';
+/** Per-matter resources refreshed in the background each incremental pass. */
+const ROLLING_REFRESH_PER_PASS = 4;
+const MATTER_TYPE_CATALOG_TTL_DAYS = 7;
+const EVENT_HISTORY_YEARS = 2;
 
 export class SyncWorker {
   /** Last sync outcome, for diagnostics (/api/smokeball/verify). */
   lastSync: SyncStatus | null = null;
+  /** When any sync last succeeded — drives the "Synced" pill. */
+  lastOkAt: string | null = null;
+  /** Set while a sync is running. */
+  progress: SyncProgress | null = null;
+  /** Last webhook delivery seen, for diagnostics. */
+  lastWebhook: { at: string; type: string } | null = null;
+
+  /** True while the very first full read of this source is under way. */
+  firstRun = false;
+
+  private running: Promise<unknown> | null = null;
+  private syncTimer: ReturnType<typeof setTimeout> | null = null;
+  private refreshedAt = new Map<string, number>();
+  private pendingMatterIds = new Set<string>();
+  /** A resource that keeps failing (missing scope) is skipped for the rest of a run. */
+  private failures = new Map<PerMatterKind, { streak: number; total: number; sample: string }>();
+  private disabled = new Set<PerMatterKind>();
 
   constructor(
     private db: Db,
     private client: SmokeballClient,
   ) {}
+
+  get busy(): boolean {
+    return this.running !== null;
+  }
 
   /** Batched multi-row upsert — a real tenant's /mattertypes is a ~20k-row
    *  global catalog, and one INSERT per row made the first sync crawl.
@@ -204,83 +242,206 @@ export class SyncWorker {
     return row?.lastSyncedAt;
   }
 
-  /** Mirror everything. Returns per-type counts for logging/telemetry. */
-  async fullSync(): Promise<Record<string, number>> {
+  /** True once a full sync has run to completion against the current source
+   *  (a full sync interrupted by a restart starts over — cheaply, since the
+   *  matter-type catalog is kept). */
+  async hasMirror(): Promise<boolean> {
+    return Boolean(await this.getCursor('full'));
+  }
+
+  // ------------------------------------------------------------ exclusivity
+
+  /** One sync at a time. A full sync waits its turn; an incremental pass that
+   *  finds a sync already running is skipped (the running one covers it and
+   *  the next pass picks up anything newer from the cursor). */
+  private async exclusive<T>(kind: 'full' | 'incremental', fn: () => Promise<Record<string, number>>): Promise<Record<string, number>> {
+    if (kind === 'incremental' && this.running) return { skipped: 1 };
+    while (this.running) await this.running.catch(() => undefined);
+    this.failures.clear();
+    this.disabled.clear();
+    const run = (async () => {
+      try {
+        const counts = await fn();
+        const warnings = this.warnings();
+        this.lastSync = { at: nowIso(), kind, ok: true, counts, ...(warnings.length ? { warnings } : {}) };
+        this.lastOkAt = this.lastSync.at;
+        return counts;
+      } catch (e) {
+        this.lastSync = { at: nowIso(), kind, ok: false, error: String(e instanceof Error ? e.message : e).slice(0, 500) };
+        throw e;
+      } finally {
+        this.progress = null;
+        this.firstRun = false;
+      }
+    })();
+    this.running = run;
     try {
-      const counts = await this.fullSyncInner();
-      this.lastSync = { at: nowIso(), kind: 'full', ok: true, counts };
-      return counts;
-    } catch (e) {
-      this.lastSync = { at: nowIso(), kind: 'full', ok: false, error: String(e instanceof Error ? e.message : e).slice(0, 500) };
-      throw e;
+      return await run;
+    } finally {
+      if (this.running === run) this.running = null;
     }
+  }
+
+  private warnings(): string[] {
+    return [...this.failures.entries()]
+      .filter(([, f]) => f.total > 0)
+      .map(([kind, f]) => `${kind}: ${f.total} matter(s) could not be read${this.disabled.has(kind) ? ' (skipped for the rest of the run — likely a missing scope)' : ''} — ${f.sample}`);
+  }
+
+  private setProgress(kind: 'full' | 'incremental', phase: string, done = 0, total = 0): void {
+    this.progress = { kind, phase, done, total, startedAt: this.progress?.startedAt ?? nowIso() };
+  }
+
+  /** A list filter the real API might reject (format/unsupported) must never
+   *  cost us the whole sync: on failure, fall back to the unfiltered call. */
+  private async filtered<T>(what: string, withFilter: () => Promise<T>, without: () => Promise<T>): Promise<T> {
+    try {
+      return await withFilter();
+    } catch (e) {
+      console.error(`[pam] ${what}: filtered list failed (${String(e instanceof Error ? e.message : e).slice(0, 160)}) — retrying unfiltered`);
+      return without();
+    }
+  }
+
+  // --------------------------------------------------- per-matter resources
+
+  /** Refresh one matter's notes, files, and folders. Each resource is
+   *  isolated: a failure is recorded, never thrown, and a resource that fails
+   *  three times running (a missing scope) is skipped until the next run. */
+  private async refreshMatter(matterId: string, counts?: Record<string, number>): Promise<void> {
+    const one = async (kind: PerMatterKind, fn: () => Promise<number>) => {
+      if (this.disabled.has(kind)) return;
+      const f = this.failures.get(kind) ?? { streak: 0, total: 0, sample: '' };
+      try {
+        const n = await fn();
+        f.streak = 0;
+        if (counts) counts[kind] = (counts[kind] ?? 0) + n;
+      } catch (e) {
+        f.streak++;
+        f.total++;
+        f.sample = String(e instanceof Error ? e.message : e).slice(0, 160);
+        if (f.streak >= 3) this.disabled.add(kind);
+      }
+      this.failures.set(kind, f);
+    };
+    // Notes first: they are the settlement source of truth.
+    await one('memos', async () => {
+      const ms = await this.client.listMemos(matterId);
+      await this.upsert(schema.memos, withIds(ms).map(toMemoRow));
+      // A note deleted in Smokeball must leave the mirror too — a stale
+      // "Offer:" line would otherwise live on the settlement board forever.
+      const keep = ms.map((m) => m.id).filter(Boolean);
+      await this.db
+        .delete(schema.memos)
+        .where(keep.length ? and(eq(schema.memos.matterId, matterId), notInArray(schema.memos.id, keep)) : eq(schema.memos.matterId, matterId));
+      return ms.length;
+    });
+    await one('files', async () => {
+      const fls = await this.client.listFiles(matterId);
+      await this.upsert(schema.files, withIds(fls).map(toFileRow));
+      const keep = fls.map((f) => f.id).filter(Boolean);
+      await this.db
+        .delete(schema.files)
+        .where(keep.length ? and(eq(schema.files.matterId, matterId), notInArray(schema.files.id, keep)) : eq(schema.files.matterId, matterId));
+      return fls.length;
+    });
+    await one('folders', async () => {
+      const fs = await this.client.listFolders(matterId);
+      await this.upsert(schema.folders, withIds(fs).map(toFolderRow));
+      return fs.length;
+    });
+    this.refreshedAt.set(matterId, Date.now());
+  }
+
+  // -------------------------------------------------------------- full sync
+
+  /** Mirror everything. Returns per-type counts for logging/telemetry. */
+  fullSync(): Promise<Record<string, number>> {
+    return this.exclusive('full', () => this.fullSyncInner());
   }
 
   private async fullSyncInner(): Promise<Record<string, number>> {
     const startedAt = DateTime.utc().toISO()!;
     const counts: Record<string, number> = {};
+    this.firstRun = !(await this.hasMirror());
 
+    this.setProgress('full', 'staff');
     const staffList: Staff[] = await this.client.listStaff();
     await this.upsert(schema.staff, withIds(staffList).map(toStaffRow));
     counts['staff'] = staffList.length;
 
-    const types: MatterType[] = await this.client.listMatterTypes();
-    await this.upsert(schema.matterTypes, withIds(types).map(toMatterTypeRow));
-    counts['matterTypes'] = types.length;
+    // The matter-type catalog is ~20k global rows that rarely change —
+    // re-read it at most weekly.
+    this.setProgress('full', 'matter types');
+    const typesCursor = await this.getCursor('mattertypes');
+    const typesFresh =
+      typesCursor !== undefined &&
+      DateTime.fromISO(typesCursor) > DateTime.utc().minus({ days: MATTER_TYPE_CATALOG_TTL_DAYS }) &&
+      (await this.db.select({ id: schema.matterTypes.id }).from(schema.matterTypes).limit(1)).length > 0;
+    if (typesFresh) {
+      counts['matterTypes'] = 0;
+    } else {
+      const types: MatterType[] = await this.client.listMatterTypes();
+      await this.upsert(schema.matterTypes, withIds(types).map(toMatterTypeRow));
+      counts['matterTypes'] = types.length;
+      await this.setCursor('mattertypes', startedAt);
+    }
 
+    this.setProgress('full', 'matters');
     const matterList: Matter[] = await this.client.listMatters();
     await this.upsert(schema.matters, withIds(matterList).map(toMatterRow));
     counts['matters'] = matterList.length;
 
-    const taskList: Task[] = await this.client.listTasks();
+    // Open tasks only: years of completed tasks are noise at firm scale.
+    // (Completions arrive later through the incremental LastUpdated pass.)
+    this.setProgress('full', 'tasks');
+    const taskList: Task[] = await this.filtered(
+      'tasks',
+      () => this.client.listTasks({ isCompleted: false }),
+      () => this.client.listTasks(),
+    );
     await this.upsert(schema.tasks, withIds(taskList).map(toTaskRow));
     counts['tasks'] = taskList.length;
 
-    const eventList: CalendarEvent[] = await this.client.listEvents();
+    this.setProgress('full', 'calendar');
+    const from = DateTime.utc().minus({ years: EVENT_HISTORY_YEARS }).toISO()!;
+    const eventList: CalendarEvent[] = await this.filtered(
+      'events',
+      () => this.client.listEvents({ from }),
+      () => this.client.listEvents(),
+    );
     await this.upsert(schema.events, withIds(eventList).map(toEventRow));
     counts['events'] = eventList.length;
 
-    // Per-matter resources: folders, file metadata, memos (open matters only —
-    // closed matters keep their last-synced rows).
-    let folderCount = 0;
-    let fileCount = 0;
-    let memoCount = 0;
-    for (const m of matterList.filter((m) => m.status === 'Open')) {
-      const [fs, fls, ms] = [
-        await this.client.listFolders(m.id),
-        await this.client.listFiles(m.id),
-        await this.client.listMemos(m.id),
-      ];
-      await this.upsert(schema.folders, withIds(fs).map(toFolderRow));
-      await this.upsert(schema.files, withIds(fls).map(toFileRow));
-      await this.upsert(schema.memos, withIds(ms).map(toMemoRow));
-      folderCount += fs.length;
-      fileCount += fls.length;
-      memoCount += ms.length;
-    }
-    counts['folders'] = folderCount;
-    counts['files'] = fileCount;
-    counts['memos'] = memoCount;
-
+    // The docket is usable from here on — record the cursors now so a crash
+    // or restart during the long per-matter walk doesn't start from zero.
     for (const type of ['matters', 'tasks', 'events']) await this.setCursor(type, startedAt);
+
+    // Per-matter resources (open matters only — closed matters keep their
+    // last-synced rows).
+    const open = matterList.filter((m) => m.status === 'Open');
+    counts['memos'] = 0;
+    counts['files'] = 0;
+    counts['folders'] = 0;
+    for (const [i, m] of open.entries()) {
+      this.setProgress('full', 'notes & documents', i, open.length);
+      await this.refreshMatter(m.id, counts);
+    }
+    await this.setCursor('full', startedAt);
     return counts;
   }
 
+  // ------------------------------------------------------- incremental sync
+
   /** Pull only records changed since the last cursor. */
-  async incrementalSync(): Promise<Record<string, number>> {
-    try {
-      const counts = await this.incrementalSyncInner();
-      this.lastSync = { at: nowIso(), kind: 'incremental', ok: true, counts };
-      return counts;
-    } catch (e) {
-      this.lastSync = { at: nowIso(), kind: 'incremental', ok: false, error: String(e instanceof Error ? e.message : e).slice(0, 500) };
-      throw e;
-    }
+  incrementalSync(): Promise<Record<string, number>> {
+    return this.exclusive('incremental', () => this.incrementalSyncInner());
   }
 
   private async incrementalSyncInner(): Promise<Record<string, number>> {
     const startedAt = DateTime.utc().toISO()!;
     const counts: Record<string, number> = {};
+    this.setProgress('incremental', 'changes');
 
     const matterCursor = await this.getCursor('matters');
     const changedMatters = await this.client.listMatters(
@@ -301,19 +462,28 @@ export class SyncWorker {
     await this.upsert(schema.events, withIds(changedEvents).map(toEventRow));
     counts['events'] = changedEvents.length;
 
-    // Refresh per-matter resources for any matter that changed.
-    for (const m of changedMatters.filter((m) => m.status === 'Open')) {
-      const memosList = await this.client.listMemos(m.id);
-      await this.upsert(schema.memos, withIds(memosList).map(toMemoRow));
-    }
+    // Per-matter resources: every changed matter, every matter a webhook
+    // pointed at, plus a few of the least-recently-refreshed open matters so
+    // notes and documents never go stale for long (a new note does not
+    // necessarily bump its matter's LastUpdated).
+    const targets = new Set<string>(changedMatters.filter((m) => m.status === 'Open').map((m) => m.id));
+    for (const id of this.pendingMatterIds) targets.add(id);
+    this.pendingMatterIds.clear();
+    const openIds = (await this.db.select({ id: schema.matters.id, status: schema.matters.status }).from(schema.matters))
+      .filter((m) => m.status === 'Open')
+      .map((m) => m.id);
+    const stale = openIds
+      .filter((id) => !targets.has(id))
+      .sort((a, b) => (this.refreshedAt.get(a) ?? 0) - (this.refreshedAt.get(b) ?? 0))
+      .slice(0, ROLLING_REFRESH_PER_PASS);
+    for (const id of stale) targets.add(id);
+    for (const id of targets) await this.refreshMatter(id, counts);
 
     for (const type of ['matters', 'tasks', 'events']) await this.setCursor(type, startedAt);
     return counts;
   }
 
-  private syncTimer: ReturnType<typeof setTimeout> | null = null;
-  /** Last webhook delivery seen, for diagnostics. */
-  lastWebhook: { at: string; type: string } | null = null;
+  // --------------------------------------------------------------- webhooks
 
   /** Coalesce a burst of deliveries into one incremental sync shortly after. */
   requestSync(delayMs = 300): void {
@@ -327,16 +497,23 @@ export class SyncWorker {
   /**
    * Production path for a delivery: the payload is NOT trusted as a full
    * record (real shapes vary by event) — deletions are applied by id, and
-   * everything else triggers a prompt incremental sync from the API.
+   * everything else triggers a prompt incremental sync from the API. When the
+   * payload names a matter (note/file/matter events), that matter's notes and
+   * documents are refreshed in that same pass.
    */
   async handleWebhook(type: string, payload: unknown): Promise<void> {
     this.lastWebhook = { at: nowIso(), type };
-    const id = payload && typeof payload === 'object' ? (payload as { id?: unknown }).id : undefined;
-    if (/\.deleted$/.test(type) && typeof id === 'string') {
+    const p = (payload && typeof payload === 'object' ? payload : {}) as Record<string, unknown>;
+    const id = typeof p['id'] === 'string' ? p['id'] : undefined;
+    if (/\.deleted$/.test(type) && id) {
       const table = type.startsWith('task.') ? schema.tasks : type.startsWith('memo.') ? schema.memos : type.startsWith('matter.') ? schema.matters : type.startsWith('event.') ? schema.events : null;
       if (table) await this.db.delete(table).where(eq(table.id, id));
       return;
     }
+    const nested = p['matter'] && typeof p['matter'] === 'object' ? (p['matter'] as Record<string, unknown>)['id'] : undefined;
+    const matterId =
+      typeof p['matterId'] === 'string' ? p['matterId'] : typeof nested === 'string' ? nested : type.startsWith('matter') ? id : undefined;
+    if (matterId && /^(memo|files|matter)/.test(type)) this.pendingMatterIds.add(matterId);
     this.requestSync();
   }
 

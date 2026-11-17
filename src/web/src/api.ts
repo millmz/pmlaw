@@ -80,7 +80,21 @@ async function get<T>(path: string): Promise<T> {
   return res.json() as Promise<T>;
 }
 
+export interface Status {
+  mode: 'demo' | 'live';
+  writesEnabled: boolean;
+  sync: {
+    state: 'starting' | 'first-sync' | 'syncing' | 'ok' | 'error';
+    progress: { kind: 'full' | 'incremental'; phase: string; done: number; total: number; startedAt: string } | null;
+    lastOkAt: string | null;
+    lastError: string | null;
+    warnings: string[];
+  };
+  mirror: { matters: number; tasks: number; events: number; notes: number };
+}
+
 export const api = {
+  status: () => get<Status>('/api/status'),
   me: () => get<Me>('/api/me'),
   today: () => get<TodayData>('/api/today'),
   matters: (params: { clientName?: string; practiceArea?: string; status?: string }) => {

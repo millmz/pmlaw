@@ -1,5 +1,5 @@
-import { Component, useEffect, useState, type ReactNode } from 'react';
-import { QueryClient, QueryClientProvider, useQuery } from '@tanstack/react-query';
+import { Component, useEffect, useRef, useState, type ReactNode } from 'react';
+import { QueryClient, QueryClientProvider, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   BrowserRouter,
   NavLink,
@@ -95,6 +95,96 @@ function OrbGate() {
   return <OrbPage chatEnabled={me?.chatEnabled ?? false} />;
 }
 
+/** How long ago, in the plainest words. */
+const ago = (iso: string): string => {
+  const mins = Math.max(0, Math.round((Date.now() - new Date(iso).getTime()) / 60000));
+  if (mins < 2) return 'just now';
+  if (mins < 60) return `${mins} min ago`;
+  const h = Math.round(mins / 60);
+  return h < 24 ? `${h} hr ago` : `${Math.round(h / 24)} d ago`;
+};
+
+const useStatus = () =>
+  useQuery({
+    queryKey: ['status'],
+    queryFn: api.status,
+    // Quick while a long sync runs (progress bar), relaxed otherwise.
+    refetchInterval: (q) => (q.state.data?.sync.state === 'first-sync' || q.state.data?.sync.state === 'syncing' ? 3000 : 30000),
+    retry: false,
+  });
+
+/** The header's honest answer to "is what I'm looking at current?" */
+function SyncPill() {
+  const { data, isError } = useStatus();
+  const qc = useQueryClient();
+  const state = isError ? 'offline' : (data?.sync.state ?? 'starting');
+  const lastOk = data?.sync.lastOkAt;
+  // When a long sync lands, every page refetches so the new data just appears.
+  const prev = useRef(state);
+  useEffect(() => {
+    if ((prev.current === 'first-sync' || prev.current === 'syncing' || prev.current === 'starting') && state === 'ok') {
+      void qc.invalidateQueries({ predicate: (q) => q.queryKey[0] !== 'status' });
+    }
+    prev.current = state;
+  }, [state, qc]);
+  // Stale = the minute-by-minute refresh has not landed for a while.
+  const stale = state === 'ok' && lastOk ? Date.now() - new Date(lastOk).getTime() > 10 * 60_000 : false;
+  const tone = state === 'ok' && !stale ? 'ok' : state === 'error' || state === 'offline' || stale ? 'bad' : 'busy';
+  const label =
+    state === 'offline'
+      ? 'Offline'
+      : state === 'first-sync'
+        ? 'First sync…'
+        : state === 'syncing'
+          ? 'Syncing…'
+          : state === 'error'
+            ? 'Sync problem'
+            : state === 'starting'
+              ? 'Starting…'
+              : stale
+                ? `Synced ${ago(lastOk!)}`
+                : 'Synced';
+  const title =
+    state === 'error'
+      ? `PAM could not reach Smokeball on the last try. What you see is from ${lastOk ? ago(lastOk) : 'an earlier sync'}. ${data?.sync.lastError ?? ''}`
+      : state === 'offline'
+        ? 'PAM\'s server is not answering. Check your connection.'
+        : lastOk
+          ? `Last synced with Smokeball ${ago(lastOk)}${data?.mode === 'demo' ? ' (demo data)' : ''}.`
+          : 'Waiting for the first sync with Smokeball.';
+  return (
+    <span className={`asof asof-${tone}`} title={title} data-testid="sync-pill">
+      <span className="dot" />
+      {label}
+      {data?.mode === 'demo' && <span className="asof-demo">Demo</span>}
+    </span>
+  );
+}
+
+/** The very first read of a real firm takes minutes. Say so, with progress,
+ *  instead of showing an empty docket that looks broken. */
+function FirstSyncBanner() {
+  const { data } = useStatus();
+  if (!data || data.sync.state !== 'first-sync') return null;
+  const p = data.sync.progress;
+  const pct = p && p.total > 0 ? Math.round((p.done / p.total) * 100) : null;
+  return (
+    <div className="sync-banner" role="status">
+      <div>
+        <strong>PAM is reading your Smokeball for the first time.</strong>{' '}
+        This usually takes 5–15 minutes and only happens once. Your calendar and tasks appear first; notes and documents follow.
+      </div>
+      <div className="sync-banner-meta">
+        {p ? `Now: ${p.phase}${p.total > 0 ? ` — ${p.done} of ${p.total} matters` : ''}` : 'Starting…'}
+        {data.mirror.matters > 0 && ` · ${data.mirror.matters} matters, ${data.mirror.tasks} tasks, ${data.mirror.events} calendar entries so far`}
+      </div>
+      {pct !== null && (
+        <div className="sync-bar"><span style={{ width: `${pct}%` }} /></div>
+      )}
+    </div>
+  );
+}
+
 function Shell() {
   const location = useLocation();
   const [drawerOpen, setDrawerOpen] = useState(false);
@@ -171,8 +261,9 @@ function Shell() {
               Trial · read only
             </span>
           )}
-          <span className="asof"><span className="dot" />Synced</span>
+          <SyncPill />
         </div>
+        <FirstSyncBanner />
         <div className="page" style={onChatPage ? { padding: 0, overflow: 'hidden' } : undefined}>
           <Routes>
             <Route path="/" element={<TodayPage />} />

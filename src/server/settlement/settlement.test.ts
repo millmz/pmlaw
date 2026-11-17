@@ -76,8 +76,9 @@ describe('analysis cache (production scale)', () => {
     const { schema } = await import('../db/index.js');
     const memo = (await db.select().from(schema.memos).where(eq(schema.memos.matterId, 'm-grasso')))[0]!;
     await db.update(schema.memos).set({ updatedAt: '2026-07-26T12:00:00.000Z' }).where(eq(schema.memos.id, memo.id));
-    await analyzeMatter(db, counting, 'm-grasso', GOLDEN_ANCHOR_ISO);
-    expect(downloads).toBeGreaterThan(after1);
+    const c = await analyzeMatter(db, counting, 'm-grasso', GOLDEN_ANCHOR_ISO);
+    expect(c).not.toBe(a); // recomputed…
+    expect(downloads).toBe(after1); // …but unchanged files are not downloaded again (signals are kept per file version)
     // Restore so the ranking tests below see the golden timestamps.
     await db.update(schema.memos).set({ updatedAt: memo.updatedAt }).where(eq(schema.memos.id, memo.id));
     clearSettlementCache();
