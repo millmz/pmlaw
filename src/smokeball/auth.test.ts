@@ -94,8 +94,11 @@ describe('TokenManager', () => {
 
   it('auth failures name the Cognito reason + a hint, and cool down instead of hammering', async () => {
     const srv = fakeTokenServer([{ status: 400, body: { error: 'invalid_client', error_description: 'secret-ish' } }]);
-    const tm = new TokenManager({ tokenUrl: 'https://a/oauth2/token', clientId: 'c', fetchImpl: srv.impl });
-    await expect(tm.getToken()).rejects.toThrow(/returned 400 \(invalid_client\) — the client id\/secret/);
+    const tm = new TokenManager({ tokenUrl: 'https://auth.example.com/oauth2/token', clientId: 'abcd1234efgh', clientSecret: 'TOP-SECRET-VALUE', fetchImpl: srv.impl });
+    await expect(tm.getToken()).rejects.toThrow(/returned 400 \(invalid_client\) — this auth server does not recognize/);
+    // Self-describing, without leaking: the host asked, a 4-char id prefix, and lengths only.
+    await expect(tm.getToken()).rejects.toThrow(/\[asked auth\.example\.com; client id abcd… \(12 chars\); secret 16 chars\]/);
+    await expect(tm.getToken()).rejects.not.toThrow(/TOP-SECRET-VALUE|abcd1234efgh/);
     await expect(tm.getToken()).rejects.toThrow(/invalid_client/);
     await expect(tm.getToken()).rejects.not.toThrow(/secret-ish/);
     expect(srv.calls).toHaveLength(1); // second/third calls served from the cooldown, not the network

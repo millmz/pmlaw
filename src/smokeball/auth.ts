@@ -39,7 +39,7 @@ interface TokenResponse {
 
 /** What each Cognito reason code usually means for a Smokeball app. */
 const AUTH_HINTS: Record<string, string> = {
-  invalid_client: ' — the client id/secret pair is wrong or was regenerated in the Developer Console; re-copy both.',
+  invalid_client: ' — this auth server does not recognize the client id/secret pair. Either they were copied from the other environment\'s tab (Production keys only work against production, Staging keys only against staging), or the secret was mis-pasted or regenerated; re-copy BOTH from the same tab.',
   unauthorized_client: ' — this app is not allowed the client-credentials grant; check "Client Grant" on the app in the console.',
   invalid_scope: ' — a requested scope is not enabled for this app; unset SMOKEBALL_SCOPE or match it to the console.',
   invalid_grant: ' — the grant/refresh token was rejected; for client credentials, re-check the secret.',
@@ -113,7 +113,17 @@ export class TokenManager implements TokenProvider {
       // no secret. Never echo the rest of the body.
       const json = (await res.json().catch(() => ({}))) as { error?: string };
       const reason = typeof json.error === 'string' ? ` (${json.error})` : '';
-      const err = new Error(`smokeball auth: token endpoint returned ${res.status}${reason}${AUTH_HINTS[json.error ?? ''] ?? ''}`);
+      // Which host was asked, and the shape (never the value) of what was
+      // sent — enough to tell "wrong environment" from "bad paste".
+      let host = this.cfg.tokenUrl;
+      try {
+        host = new URL(this.cfg.tokenUrl).host;
+      } catch {
+        /* keep the raw value */
+      }
+      const id = this.cfg.clientId;
+      const sent = ` [asked ${host}; client id ${id.slice(0, 4)}… (${id.length} chars); secret ${this.cfg.clientSecret ? `${this.cfg.clientSecret.length} chars` : 'NOT SET'}]`;
+      const err = new Error(`smokeball auth: token endpoint returned ${res.status}${reason}${AUTH_HINTS[json.error ?? ''] ?? ''}${sent}`);
       this.lastFailure = { at: Date.now(), error: err };
       throw err;
     }

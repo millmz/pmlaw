@@ -9,7 +9,7 @@ import { openDb, schema } from './db/index.js';
 import { SyncWorker, clearSyncedData } from './sync/worker.js';
 import { anthropicLlm, pamApiKey, type LlmClient } from './agent/loop.js';
 import { ensureKnowledgeAdditions, putSetting } from './identity.js';
-import { normalizeBaseUrl, withTimeout } from './boot.js';
+import { normalizeBaseUrl, pairAuthUrl, withTimeout } from './boot.js';
 import { resolveCurrentStaffId } from './staff.js';
 import type { ToolContext } from './tools/types.js';
 import { buildApp } from './app.js';
@@ -84,7 +84,9 @@ async function main() {
 
   // Live OAuth when the dev-console credentials are present; static token
   // (the mock, or a hand-issued bearer) otherwise. docs/02 "Auth".
-  const authUrl = process.env['SMOKEBALL_AUTH_URL']?.trim();
+  const paired = useReal ? pairAuthUrl(baseUrl, process.env['SMOKEBALL_AUTH_URL']) : { authUrl: process.env['SMOKEBALL_AUTH_URL'] };
+  if (paired.corrected) console.log(`[pam] ${paired.corrected}`);
+  const authUrl = paired.authUrl?.trim();
   const clientId = process.env['SMOKEBALL_CLIENT_ID']?.trim();
   let tokenProvider: TokenManager | undefined;
   if (useReal && authUrl && clientId) {
@@ -242,7 +244,7 @@ async function main() {
           console.log('[pam] no public URL known (PAM_PUBLIC_URL / RENDER_EXTERNAL_URL) — webhooks not registered; polling only');
         }
       })
-      .catch((e) => console.error('[pam] initial sync failed (server stays up; see /api/smokeball/verify):', e));
+      .catch((e) => console.error('[pam] initial sync failed (server stays up; see /api/smokeball/verify):', e instanceof Error ? e.message : e));
   } else {
     console.log('[pam] full sync…');
     // The mock is local and deterministic — await it so tests and dev see
@@ -258,7 +260,7 @@ async function main() {
     worker
       .incrementalSync()
       .then(refreshStaff)
-      .catch((e) => console.error('[pam] incremental sync failed:', e));
+      .catch((e) => console.error('[pam] incremental sync failed:', e instanceof Error ? e.message : e));
   }, 60_000);
 
   const shutdown = async () => {
