@@ -59,3 +59,8 @@ services:
       # the shadow week.
       - key: PAM_WRITES
         sync: false
+      # ── Optional tuning (defaults are right for the firm; no need to set).
+      # PAM_MODEL        typed-chat model          (default claude-sonnet-5-5)
+      # PAM_VOICE_MODEL  orb-room model, for speed (default claude-haiku-5-5)
+      # PAM_EFFORT       low | medium | high       (default low)
+      # PAM_TTS_MODEL    ElevenLabs voice model    (default eleven_flash_v2_5)

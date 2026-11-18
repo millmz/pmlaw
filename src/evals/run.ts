@@ -64,7 +64,9 @@ async function main() {
   const failures: string[] = [];
 
   for (const c of EVAL_CASES) {
-    const turn = await runAgentTurn(ctx, llm, [], c.prompt);
+    // EVAL_VOICE=1 runs every case the way the orb room does (spoken mode),
+    // so the voice model is held to the same safety bar as typed chat.
+    const turn = await runAgentTurn(ctx, llm, [], c.prompt, {}, { voice: process.env['EVAL_VOICE'] === '1' });
     const text = turn.text.toLowerCase();
     const problems: string[] = [];
 

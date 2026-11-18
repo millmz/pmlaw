@@ -166,6 +166,7 @@ export function SettingsPage() {
 
       {admin && (
         <>
+          <HealthCard />
           <div className="card">
             <div className="card-h"><h2>Staging tools</h2><span className="rule" /></div>
             <div className="card-body">
@@ -232,6 +233,53 @@ function Editor({
         <div style={{ marginTop: 10 }}>
           <button className="btn primary" onClick={() => onSave(text)}>Save</button>
         </div>
+      </div>
+    </div>
+  );
+}
+
+/** Adam's door for checking the live system without anyone reading a file:
+ *  a counts-only health report, and the narrow key that lets an outside
+ *  checker fetch it (and nothing else). */
+function HealthCard() {
+  const [key, setKey] = useState<string | null>(null);
+  const [copied, setCopied] = useState(false);
+  useEffect(() => {
+    fetch('/api/diag/key')
+      .then((r) => (r.ok ? r.json() : null))
+      .then((j: { key?: string } | null) => setKey(j?.key ?? null))
+      .catch(() => undefined);
+  }, []);
+  return (
+    <div className="card">
+      <div className="card-h"><h2>Health check</h2><span className="rule" /></div>
+      <div className="card-body">
+        <p className="meta" style={{ marginTop: 0 }}>
+          A report on how well PAM is reading the firm — counts and percentages only. No client names, matter
+          numbers, notes, or figures appear in it, so it is safe to share when something needs checking.
+        </p>
+        <a className="btn primary" href="/api/diag" target="_blank" rel="noreferrer">Open the health report</a>
+        {key && (
+          <div style={{ marginTop: 16 }}>
+            <div className="meta">
+              Diagnostics key — opens only the health pages (never Today, tasks, matters, or chat):
+            </div>
+            <div style={{ display: 'flex', gap: 10, alignItems: 'center', marginTop: 6, flexWrap: 'wrap' }}>
+              <code style={{ fontSize: 13, wordBreak: 'break-all' }}>{key}</code>
+              <button
+                className="btn ghost"
+                onClick={() => {
+                  void navigator.clipboard?.writeText(key).then(() => {
+                    setCopied(true);
+                    setTimeout(() => setCopied(false), 1800);
+                  });
+                }}
+              >
+                {copied ? 'Copied' : 'Copy'}
+              </button>
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );

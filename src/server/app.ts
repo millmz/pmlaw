@@ -58,6 +58,20 @@ export function buildApp(deps: AppDeps): FastifyInstance {
     return typeof cookie === 'string' && safeEqual(cookie, sessionToken(accessCode));
   };
 
+  // The diagnostics key: a separate, narrow credential that opens ONLY the
+  // no-client-data health pages — so PAM can be checked from outside (by
+  // Adam's assistant) without the access code and without exposing a file.
+  const DIAG_ROUTES = new Set(['/api/diag', '/api/status', '/api/smokeball/verify', '/api/smokeball/inspect', '/api/chat/timing', '/api/health/services']);
+  let diagKey: string | null = null;
+  const getDiagKey = async (): Promise<string> => {
+    if (diagKey) return diagKey;
+    const row = (await ctx.db.select().from(schema.appSettings).where(eq(schema.appSettings.key, 'diag.key')).limit(1))[0];
+    if (row?.value) return (diagKey = row.value);
+    const fresh = `pamdiag-${randomUUID().replace(/-/g, '')}`;
+    await ctx.db.insert(schema.appSettings).values({ key: 'diag.key', value: fresh }).onConflictDoNothing();
+    return (diagKey = fresh);
+  };
+
   app.addHook('onRequest', async (req, reply) => {
     const open =
       req.url === '/healthz' ||
@@ -66,8 +80,22 @@ export function buildApp(deps: AppDeps): FastifyInstance {
       req.url === '/api/me' ||
       !req.url.startsWith('/api/');
     if (open) return;
-    if (!authed(req)) return reply.code(401).send({ error: 'authentication required' });
+    if (authed(req)) return;
+    const offered = req.headers['x-pam-key'];
+    if (typeof offered === 'string' && req.method === 'GET' && DIAG_ROUTES.has(req.url.split('?')[0]!)) {
+      const key = await getDiagKey();
+      if (offered.length === key.length && safeEqual(offered, key)) return;
+    }
+    return reply.code(401).send({ error: 'authentication required' });
   });
+
+  app.get('/api/diag', async () => {
+    const { buildDiag } = await import('./diag.js');
+    const { PAM_MODEL } = await import('./agent/loop.js');
+    return buildDiag(ctx, worker, { lastTurnTiming, models: { chat: PAM_MODEL, voice: deps.voiceModel ?? PAM_MODEL }, writes: ctx.writesEnabled !== false });
+  });
+  /** Shown on the admin settings page; never reachable with the diag key itself. */
+  app.get('/api/diag/key', async () => ({ key: await getDiagKey() }));
 
   app.get('/healthz', async () => {
     const { checkBrain, checkVoice } = await import('./health.js');
@@ -742,6 +770,7 @@ export function buildApp(deps: AppDeps): FastifyInstance {
   });
 
   let lastTurnTiming: unknown = null;
+  let voiceModelDownUntil = 0;
   let lastPrewarm = 0;
   /** Warm the model's prompt cache when the orb room (or chat) opens, so the
    *  first question after a quiet spell is as fast as the tenth. At most
@@ -803,6 +832,18 @@ export function buildApp(deps: AppDeps): FastifyInstance {
       // the most recent slice (block-2 snapshot carries current state anyway).
       const window = session.history.slice(-60); // ~30 turns; drift checkpoint still fires at 28 msgs
       const { panelFor } = await import('./panels.js');
+      const { mirror } = await import('./db/mirror.js');
+      const initials = (await mirror.staff(ctx.db)).map((st) => st.initials).filter(Boolean);
+      // One panel per subject per answer: the full task list already
+      // contains the overdue ones, so a later overdue-only lookup adds nothing.
+      const shown = new Set<string>();
+      const showPanel = (name: string, params: unknown, data: unknown) => {
+        const panel = panelFor(name, params, data, { initials });
+        if (!panel) return;
+        if (panel.kind === 'tasks' && panel.title === 'Overdue' && shown.has('tasks:Tasks')) return;
+        shown.add(`${panel.kind}:${panel.title}`);
+        send({ type: 'panel', panel });
+      };
       // A briefing is answered from the snapshot (no lookup, so no panel of
       // its own) — put the day on the screen while she talks through it.
       if (voice === true && /\bbrief(ing)?\b|\bmy day\b|\bwhat(['’]?s| is) on (for )?today\b/i.test(message)) {
@@ -811,33 +852,44 @@ export function buildApp(deps: AppDeps): FastifyInstance {
           ['get_tasks', { status: 'all_open' }],
         ] as const) {
           try {
-            const panel = panelFor(name, params, (await runTool(ctx, name, params)).data);
-            if (panel) send({ type: 'panel', panel });
+            showPanel(name, params, (await runTool(ctx, name, params)).data);
           } catch {
             /* the briefing itself does not depend on this */
           }
         }
       }
-      const turn = await runAgentTurn(
-        ctx,
-        voice === true && deps.voiceLlm ? deps.voiceLlm : deps.llm,
-        window,
-        message,
-        {
-          onText: (delta) => send({ type: 'text_delta', text: delta }),
-          onNote: (delta) => send({ type: 'note_delta', text: delta }),
-          onTool: (name) => send({ type: 'tool', name }),
-          onToolResult: (name, params, data) => {
-            try {
-              const panel = panelFor(name, params, data);
-              if (panel) send({ type: 'panel', panel });
-            } catch {
-              /* a panel is a nicety — never fail the turn for one */
-            }
-          },
+      let spoke = false;
+      const hooks = {
+        onText: (delta: string) => {
+          spoke = true;
+          send({ type: 'text_delta', text: delta });
         },
-        { voice: voice === true },
-      );
+        onNote: (delta: string) => {
+          spoke = true;
+          send({ type: 'note_delta', text: delta });
+        },
+        onTool: (name: string) => send({ type: 'tool', name }),
+        onToolResult: (name: string, params: unknown, data: unknown) => {
+          try {
+            showPanel(name, params, data);
+          } catch {
+            /* a panel is a nicety — never fail the turn for one */
+          }
+        },
+      };
+      const useVoiceModel = voice === true && deps.voiceLlm !== undefined && Date.now() > voiceModelDownUntil;
+      let turn;
+      try {
+        turn = await runAgentTurn(ctx, useVoiceModel ? deps.voiceLlm! : deps.llm, window, message, hooks, { voice: voice === true });
+      } catch (e) {
+        // The fast voice model is unavailable to this key (or having a bad
+        // minute): answer with the main model rather than not at all, and
+        // stop trying the fast one for a while.
+        if (!useVoiceModel || spoke) throw e;
+        voiceModelDownUntil = Date.now() + 10 * 60_000;
+        console.error(`[pam] voice model failed (${String(e instanceof Error ? e.message : e).slice(0, 160)}) — answering with the main model for the next 10 minutes`);
+        turn = await runAgentTurn(ctx, deps.llm, window, message, hooks, { voice: true });
+      }
       const tm = turn.timing;
       console.log(
         `[pam] turn${voice ? ' (voice)' : ''}: total ${tm.totalMs}ms · prep ${tm.prepMs}ms · ` +

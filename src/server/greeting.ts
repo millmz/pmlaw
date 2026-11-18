@@ -1,6 +1,7 @@
 import { DateTime } from 'luxon';
 import { FIRM_TZ, appNow, isStatuteReminder, looksLikeCourt } from '../core/dates.js';
 import { mirror } from './db/mirror.js';
+import { stripInitials } from './panels.js';
 import { runTool } from './tools/registry.js';
 import type { ToolContext } from './tools/types.js';
 
@@ -35,12 +36,13 @@ export function spokenTime(d: DateTime): string {
   return m === 0 ? count(h) : `${count(h)} ${m < 10 ? `oh ${count(m)}` : String(m)}`;
 }
 
-/** Strip the firm's calendar prefixes ("JTM ", "JTM - ") for speech. */
-const tidy = (subject: string): string => subject.replace(/^[A-Z]{2,4}\s*[-–:]?\s+/, '').trim();
 
 export async function buildGreeting(ctx: ToolContext): Promise<Greeting> {
   const now = appNow(ctx.fixedNowIso).setZone(FIRM_TZ);
-  const staff = (await mirror.staff(ctx.db)).find((s) => s.id === ctx.currentStaffId);
+  const allStaff = await mirror.staff(ctx.db);
+  const staff = allStaff.find((s) => s.id === ctx.currentStaffId);
+  // The firm's calendar prefixes ("JTM ", "JTM - ") are not said aloud.
+  const tidy = (subject: string): string => stripInitials(subject, allStaff.map((s) => s.initials)).trim();
   const first = staff?.firstName?.replace(/^Jeffrey$/i, 'Jeff') || 'Jeff';
   const part = now.hour < 12 ? 'Good morning' : now.hour < 17 ? 'Good afternoon' : 'Good evening';
 

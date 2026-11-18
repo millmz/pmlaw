@@ -119,6 +119,40 @@ The first time the board is opened after the first sync it may say *"PAM is
 still reading the firm's matters — N of M reviewed"* and fill in as it goes;
 after that it is instant, including across restarts.
 
+### Checking the live system without reading a file (`/api/diag`)
+
+`/settings?admin=1` → **Health check** → *Open the health report*. The page
+is counts and coverage only — how many open matters carry a statute date,
+whether tasks and calendar entries resolve to people on the staff list, how
+many notes are in a shape the Settle board can read, what the board found,
+and how long the last answer took. No client name, matter number, note, or
+figure appears in it, so it can be pasted to Adam's assistant as-is.
+
+The same card shows a **diagnostics key**. Sent as an `x-pam-key` header it
+opens only the health pages (`/api/diag`, `/api/status`,
+`/api/smokeball/verify`, `/api/smokeball/inspect`) — never Today, tasks,
+matters, settlements, or chat.
+
+### The orb room
+
+- **Speed.** Her first words should come about a second after a question
+  ends; a full answer in two to three. *System check* in the orb room shows
+  the last answer's timing; the Render log has a `[pam] turn (voice): …`
+  line per question with where the time went.
+- **Models.** The orb room runs `PAM_VOICE_MODEL` (default Claude Haiku 5.5:
+  fastest to first word, and it passes the same safety evals); typed chat
+  runs `PAM_MODEL` (default Claude Sonnet 5.5). If the voice model is not
+  available to the API key, PAM answers with the main model and says so in
+  the log.
+- **Voice.** With an ElevenLabs key she speaks in the chosen voice, streamed
+  as it is generated; without one (or if the key fails) the browser's voice
+  takes over — *System check* names which, and why.
+- **Listening.** Chrome, Edge, and Safari use the browser's recognizer. Other
+  browsers record the question and transcribe it through ElevenLabs (the
+  key needs speech-to-text permission); the recording is not kept.
+- **Keys.** Tap the orb or press Space to talk; tap or press Space again to
+  interrupt her; Escape quiets everything.
+
 ## 4. Shadow week (the gate from docs/06)
 
 Jeff uses PAM alongside Smokeball for 5–10 working days:

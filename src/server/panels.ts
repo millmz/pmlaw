@@ -74,8 +74,25 @@ const STATUS_WORDS: Record<string, { label: string; tone: PanelItem['tone'] }> =
   demand_made: { label: 'Demand made', tone: 'info' },
 };
 
+/** The firm titles calendar entries and tasks with the owner's initials
+ *  ("JTM Deposition - …"). On a panel that is noise — but only a prefix that
+ *  really is a staff member's initials is removed ("IME - Dr. Patel" stays). */
+export function stripInitials(subject: string, initials: Iterable<string> = []): string {
+  const m = subject.match(/^([A-Z]{2,4})\s*[-–:]?\s+(?=\S)/);
+  if (!m) return subject;
+  for (const i of initials) if (i && i.toUpperCase() === m[1]) return subject.slice(m[0].length);
+  return subject;
+}
+
 /** Build the panel for one tool result, or null when there is nothing worth showing. */
-export function panelFor(tool: string, params: unknown, data: unknown): Panel | null {
+export function panelFor(tool: string, params: unknown, data: unknown, opts: { initials?: Iterable<string> } = {}): Panel | null {
+  const p0 = buildPanel(tool, params, data);
+  if (!p0 || !opts.initials) return p0;
+  const ini = [...opts.initials];
+  return { ...p0, ...(p0.items ? { items: p0.items.map((it) => ({ ...it, title: stripInitials(it.title, ini) })) } : {}) };
+}
+
+function buildPanel(tool: string, params: unknown, data: unknown): Panel | null {
   const d = rec(data);
   if (str(d['error'])) return null;
   const p = rec(params);
@@ -124,7 +141,8 @@ export function panelFor(tool: string, params: unknown, data: unknown): Panel | 
       return withMore(
         {
           kind: 'tasks',
-          title: 'Tasks',
+          // An overdue-only lookup is its own panel, not a replacement for the full list.
+          title: 'needsDecision' in d ? 'Overdue' : 'Tasks',
           ...(bits.length ? { caption: bits.join(' · ') } : {}),
           items: shown.map(taskItem),
           ...(statute.length ? { note: `${statute.length} statute reminder${statute.length === 1 ? '' : 's'} sitting in overdue — expected, never moved.` } : {}),

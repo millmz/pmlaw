@@ -210,3 +210,35 @@ describe('speech clips', () => {
     expect((await app.inject({ method: 'POST', url: '/api/stt', headers: { 'content-type': 'audio/webm' }, payload: Buffer.alloc(10) })).statusCode).toBe(400);
   });
 });
+
+describe('the diagnostics key opens the health pages and nothing else', () => {
+  it('reports coverage without a single client name, matter number, or note', async () => {
+    const gated = buildApp({ ctx: { db, currentStaffId: 's-jeff', fixedNowIso: GOLDEN_ANCHOR_ISO }, worker: new SyncWorker(db, null as never), accessCode: 'front-door' });
+    await gated.ready();
+    expect((await gated.inject({ method: 'GET', url: '/api/diag' })).statusCode).toBe(401);
+    const login = await gated.inject({ method: 'POST', url: '/api/login', payload: { code: 'front-door' } });
+    const cookie = String(login.headers['set-cookie']).split(';')[0]!;
+    const { key } = (await gated.inject({ method: 'GET', url: '/api/diag/key', headers: { cookie } })).json() as { key: string };
+    expect(key).toMatch(/^pamdiag-[0-9a-f]{32}$/);
+
+    const res = await gated.inject({ method: 'GET', url: '/api/diag', headers: { 'x-pam-key': key } });
+    expect(res.statusCode).toBe(200);
+    const d = res.json() as { user: { resolvedInStaffList: boolean }; matters: { open: number; withStatuteDate: string; openByCategory: Record<string, number> }; tasks: { assigneesFoundInStaffList: string; statuteReminders: number }; notes: { labelledDemandOrOffer: number } };
+    expect(d.user.resolvedInStaffList).toBe(true);
+    expect(d.matters.open).toBeGreaterThan(5);
+    expect(d.matters.openByCategory['Personal Injury']).toBeGreaterThan(0);
+    expect(d.tasks.assigneesFoundInStaffList).toBe('100%');
+    expect(d.tasks.statuteReminders).toBeGreaterThan(0);
+    expect(d.notes.labelledDemandOrOffer).toBeGreaterThan(0);
+    for (const secret of ['Grasso', 'Vasquez', 'Boland', '24-1101', '110,000', 'Clarkstown', 'adjuster Kevin']) expect(res.body).not.toContain(secret);
+
+    // The key is narrow: client data, writes, and the key itself stay shut.
+    for (const url of ['/api/today', '/api/tasks', '/api/matters', '/api/settlements', '/api/chat/history', '/api/diag/key', '/api/audit']) {
+      expect((await gated.inject({ method: 'GET', url, headers: { 'x-pam-key': key } })).statusCode, url).toBe(401);
+    }
+    expect((await gated.inject({ method: 'POST', url: '/api/sync', headers: { 'x-pam-key': key } })).statusCode).toBe(401);
+    expect((await gated.inject({ method: 'GET', url: '/api/diag', headers: { 'x-pam-key': `${key.slice(0, -1)}x` } })).statusCode).toBe(401);
+    expect((await gated.inject({ method: 'GET', url: '/api/status', headers: { 'x-pam-key': key } })).statusCode).toBe(200);
+    await gated.close();
+  });
+});

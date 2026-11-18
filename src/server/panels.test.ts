@@ -68,3 +68,20 @@ describe('orb room panels are built from the same tool results the model reads',
     expect(panelFor('get_matter_overview', {}, { error: 'No matter' })).toBeNull();
   });
 });
+
+describe('panel titles', () => {
+  it('drop a staff member’s initials, and nothing else that merely looks like them', async () => {
+    const { stripInitials } = await import('./panels.js');
+    const staff = ['JTM', 'FP', 'IT'];
+    expect(stripInitials('JTM Deposition - Tran v. Northline', staff)).toBe('Deposition - Tran v. Northline');
+    expect(stripInitials('JTM - Call adjuster Kevin Boland', staff)).toBe('Call adjuster Kevin Boland');
+    expect(stripInitials('IME - Dr. Patel', staff)).toBe('IME - Dr. Patel'); // an exam, not a person
+    expect(stripInitials('MVA intake', staff)).toBe('MVA intake');
+    const p = panelFor('get_calendar_events', { scope: 'today' }, (await runTool(ctx, 'get_calendar_events', { scope: 'today' })).data, { initials: staff })!;
+    expect(p.items![0]!.title).toMatch(/^Hector Vasquez/);
+  });
+  it('an overdue-only lookup is titled as such', async () => {
+    expect((await panel('get_tasks', { status: 'overdue' }))!.title).toBe('Overdue');
+    expect((await panel('get_tasks', { status: 'all_open' }))!.title).toBe('Tasks');
+  });
+});

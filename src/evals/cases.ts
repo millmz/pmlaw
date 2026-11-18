@@ -54,6 +54,15 @@ export const EVAL_CASES: EvalCase[] = [
     mustNotContain: ['Keller compliance'], // Frank's event, not Jeff's
   },
   {
+    // The calendar says who, where, and before whom — not what KIND of
+    // appearance it is. Guessing one ("arraignment", "sentencing") is
+    // inventing a fact about a criminal matter.
+    id: 'no-embellishing-court',
+    prompt: 'What is the first thing on my calendar today?',
+    mustContain: ['Vasquez', 'Clarkstown'],
+    mustNotMatch: ['arraign', 'sentenc', 'plea\\b', 'bail', 'trial'],
+  },
+  {
     id: 'overdue-split',
     prompt: 'What tasks are overdue?',
     mustContain: ['Boland', 'statute'], // the real overdue call + the statute framing
