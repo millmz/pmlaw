@@ -168,8 +168,10 @@ kbd {
 .sb-brand { display: flex; align-items: center; gap: 12px; padding: 16px 16px 14px; min-height: var(--topbar-h); color: inherit; text-decoration: none; }
 .sb-brand:hover { text-decoration: none; }
 .sb-mark {
-  flex: none; width: 36px; height: 36px; border-radius: 9px; display: grid; place-items: center;
-  font: 700 0.8125rem/1 var(--serif); letter-spacing: 0.04em; color: var(--frame);
+  /* Sized in rem so the monogram and its tile grow together (A/A+), with
+     no letter-spacing: trailing tracking pushes centred text off-centre. */
+  flex: none; width: 2.5rem; height: 2.5rem; border-radius: 0.6rem; display: flex; align-items: center; justify-content: center;
+  font: 700 0.75rem/1 var(--serif); letter-spacing: 0; white-space: nowrap; color: var(--frame);
   background: linear-gradient(145deg, var(--brass-bright), var(--brass));
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.35), 0 1px 2px rgba(0, 0, 0, 0.4);
 }
@@ -207,7 +209,7 @@ kbd {
 .sb-collapse:hover { background: color-mix(in srgb, var(--frame-ink) 8%, transparent); color: var(--frame-ink); }
 .shell[data-nav='collapsed'] .sb-name, .shell[data-nav='collapsed'] .sb-label, .shell[data-nav='collapsed'] .nav-text,
 .shell[data-nav='collapsed'] .nav-badge, .shell[data-nav='collapsed'] .sb-user-text { display: none; }
-.shell[data-nav='collapsed'] .sb-brand { padding-left: 16px; }
+.shell[data-nav='collapsed'] .sb-brand { padding-left: 0; padding-right: 0; justify-content: center; }
 .shell[data-nav='collapsed'] .nav-link { justify-content: center; padding: 0; }
 .shell[data-nav='collapsed'] .sb-section { margin-top: 10px; padding-top: 10px; border-top: 1px solid color-mix(in srgb, var(--frame-ink) 8%, transparent); }
 .shell[data-nav='collapsed'] .sb-section:first-child { border-top: 0; padding-top: 0; }
