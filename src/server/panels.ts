@@ -130,13 +130,18 @@ function buildPanel(tool: string, params: unknown, data: unknown): Panel | null 
       const dueToday = arr(d['dueToday']);
       const upcoming = arr(d['upcoming']);
       const statute = arr(rec(d['statuteReminders'])['tasks']);
+      const statuteTotal = typeof rec(d['statuteReminders'])['total'] === 'number' ? (rec(d['statuteReminders'])['total'] as number) : statute.length;
       const all = [...dueToday, ...overdue.filter((t) => !statute.includes(t)), ...upcoming];
-      if (all.length === 0 && statute.length === 0) return { kind: 'tasks', title: 'Tasks', caption: 'Nothing open' };
+      if (all.length === 0 && statuteTotal === 0) return { kind: 'tasks', title: 'Tasks', caption: 'Nothing open' };
       const { shown, more } = cap(all);
+      // Long lists arrive cut to a page; the caption speaks the true totals.
+      const totals = rec(d['totals']);
+      const n = (key: string, fallback: number) => (typeof totals[key] === 'number' ? (totals[key] as number) : fallback);
+      const counts = { dueToday: n('dueToday', dueToday.length), overdue: n('overdue', n('needsDecision', overdue.length)), upcoming: n('upcoming', upcoming.length) };
       const bits = [
-        dueToday.length ? `${dueToday.length} due today` : '',
-        overdue.length ? `${overdue.length} overdue` : '',
-        upcoming.length ? `${upcoming.length} upcoming` : '',
+        counts.dueToday ? `${counts.dueToday} due today` : '',
+        counts.overdue ? `${counts.overdue} overdue` : '',
+        counts.upcoming ? `${counts.upcoming} upcoming` : '',
       ].filter(Boolean);
       return withMore(
         {
@@ -145,7 +150,7 @@ function buildPanel(tool: string, params: unknown, data: unknown): Panel | null 
           title: 'needsDecision' in d ? 'Overdue' : 'Tasks',
           ...(bits.length ? { caption: bits.join(' · ') } : {}),
           items: shown.map(taskItem),
-          ...(statute.length ? { note: `${statute.length} statute reminder${statute.length === 1 ? '' : 's'} sitting in overdue — expected, never moved.` } : {}),
+          ...(statuteTotal ? { note: `${statuteTotal} statute reminder${statuteTotal === 1 ? '' : 's'} sitting in overdue — expected, never moved.` } : {}),
         },
         more,
       );

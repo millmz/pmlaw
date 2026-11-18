@@ -178,3 +178,44 @@ describe('first sync at firm scale: the docket never waits on client names', () 
     await opened.close();
   });
 });
+
+describe('custom fields (statute date, date of loss, in suit) come from layouts', () => {
+  it('a mirror built before layouts were read catches up on the next passes, and a list sync never blanks what was found', async () => {
+    const opened = await openDb();
+    const worker = new SyncWorker(opened.db, newClient());
+    await worker.fullSync();
+    const grasso = async () => (await opened.db.select().from(schema.matters).where(eq(schema.matters.id, 'm-grasso')))[0]!;
+    const statute = (await grasso()).statuteDate;
+    expect(statute).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+
+    // The live mirror as it was: no custom fields, no catch-up recorded.
+    await opened.db.update(schema.matters).set({ statuteDate: null, dateOfLoss: null, isInSuit: null });
+    await opened.db.delete(schema.syncState).where(eq(schema.syncState.recordType, 'layouts'));
+    expect(worker.factsBackfill).toBeNull();
+    await worker.incrementalSync();
+    expect((await grasso()).statuteDate).toBe(statute);
+    expect((await grasso()).dateOfLoss).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+    // 14 matters fit one pass, so the catch-up is recorded as finished.
+    expect((await opened.db.select().from(schema.syncState).where(eq(schema.syncState.recordType, 'layouts'))).length).toBe(1);
+
+    // The matter list carries no custom fields: re-reading it keeps them.
+    await opened.db.delete(schema.syncState).where(eq(schema.syncState.recordType, 'matters'));
+    await worker.incrementalSync();
+    expect((await grasso()).statuteDate).toBe(statute);
+    await opened.close();
+  });
+
+  it('a firm whose app cannot read layouts still syncs; the gap is reported, not fatal', async () => {
+    const opened = await openDb();
+    const client = newClient();
+    client.matterFacts = async () => {
+      throw new Error('403 Forbidden: not authorized (layouts/read)');
+    };
+    const worker = new SyncWorker(opened.db, client);
+    const counts = await worker.fullSync();
+    expect(counts['matters']).toBe(14);
+    expect(worker.factsBackfill).toBe('unavailable');
+    expect(JSON.stringify(worker.lastSync)).toMatch(/layouts/);
+    await opened.close();
+  });
+});

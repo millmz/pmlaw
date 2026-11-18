@@ -6,7 +6,7 @@ import type { ToolContext, ToolDef, ToolResult } from './types.js';
  *  board and the conversation can never disagree. */
 
 const boardSchema = z.object({
-  limit: z.number().optional().describe('Max matters to return, ranked by most recent negotiation activity. Default all.'),
+  limit: z.number().optional().describe('Max matters to return, ranked by most recent negotiation activity. Default 25; `total` is always the true count.'),
 });
 
 const getSettlementBoard: ToolDef = {
@@ -14,7 +14,7 @@ const getSettlementBoard: ToolDef = {
   description:
     'The settlement status board: every open matter with settlement activity, ranked by most recent negotiation. Each row: status (with reason; demand_made = a demand is noted but no offer yet), insurer, adjuster name/email/phone, claim number, policy limits, liens, demand, current offer (+date/by), injuries, follow-up task state, who negotiated last, and full citations. Use for "what am I negotiating", "top five cases", "which packages need follow-up". NEVER claim a package was sent unless status is sent_verified/sent_acknowledged — prepared_unverified means sending could not be verified (may have gone by mail). A row with `interpreted` fields had those values read from free-form notes rather than labelled ones — say "per the notes" for them.',
   paramsSchema: boardSchema,
-  run: async (ctx, raw) => settlementBoardResult(ctx, boardSchema.parse(raw).limit, 40_000),
+  run: async (ctx, raw) => settlementBoardResult(ctx, boardSchema.parse(raw).limit ?? 25, 40_000),
 };
 
 /** Shared by the chat tool and the Settle page (which waits less and polls). */
@@ -30,6 +30,8 @@ export async function settlementBoardResult(ctx: ToolContext, limit: number | un
     return {
       data: {
         count: rows.length,
+        total: board.length,
+        ...(board.length > rows.length ? { showingNote: `These are the ${rows.length} most recently negotiated of ${board.length} cases on the board. Say so; ask for more with a larger limit only if the user wants the rest.` } : {}),
         ...(res.warming
           ? {
               warming: true,

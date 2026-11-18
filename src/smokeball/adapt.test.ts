@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import {
+import { matterFactsFrom,
   adaptContactName,
   adaptEvent,
   adaptFile,
@@ -171,5 +171,29 @@ describe('matter custom fields, wherever the tenant keeps them', () => {
     const m = adaptMatter({ ...base, items: { statuteDate2: 'TBD', 'Index No': '', limitationNote: 'check with JTM' } })!;
     expect(m.statuteDate).toBeUndefined();
     expect(m.isInSuit).toBeUndefined();
+  });
+});
+
+describe('matterFactsFrom (custom fields from /matters/{id}/layouts)', () => {
+  const layouts = [
+    { id: 'l1', name: 'Parties', values: [{ key: 'ClientDOB', value: '1980-02-03' }] },
+    {
+      id: 'l2',
+      name: 'Accident Details',
+      values: [
+        { key: 'DateOfAccident', value: '06/02/2025' },
+        { key: 'StatuteOfLimitationsDate', value: '2028-06-01T00:00:00' },
+        { key: 'IndexNumber', value: '031245/2026' },
+        { key: 'LimitationNotes', value: 'see file' },
+      ],
+    },
+  ];
+  it('finds the statute date, date of loss and suit status by field name', () => {
+    expect(matterFactsFrom(layouts)).toEqual({ dateOfLoss: '2025-06-02', statuteDate: '2028-06-01', isInSuit: true });
+  });
+  it('never takes a non-date for a date, and an empty index number is not "in suit"', () => {
+    expect(matterFactsFrom([{ name: 'A', values: [{ key: 'StatuteOfLimitations', value: 'TBD' }, { key: 'IndexNumber', value: '' }] }])).toEqual({});
+    expect(matterFactsFrom([{ name: 'A', values: [{ key: 'InSuit', value: 'No' }] }])).toEqual({ isInSuit: false });
+    expect(matterFactsFrom([])).toEqual({});
   });
 });

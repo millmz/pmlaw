@@ -45,12 +45,31 @@ export const matterToDto = (m: Matter) => ({
   clients: [ref(contactIdFor(m.id))],
   openedDate: m.createdAt,
   versionId: String(isoToTicks(m.updatedAt)),
-  // Custom/layout data — the real key names get confirmed on live data.
-  items: {
-    ...(m.dateOfLoss ? { dateOfLoss: m.dateOfLoss } : {}),
-    ...(m.statuteDate ? { statuteDate: m.statuteDate } : {}),
-    ...(m.isInSuit !== undefined ? { isInSuit: m.isInSuit } : {}),
-  },
+  // Roles only — as on the real API, custom fields are NOT on the matter;
+  // they are served by /matters/{id}/layouts (layoutsToDto below).
+  items: {},
+});
+
+/** GET /matters/{id}/layouts — LayoutMatterItemDataCollection. */
+export const layoutsToDto = (m: Matter) => ({
+  id: m.id,
+  value:
+    m.dateOfLoss || m.statuteDate || m.isInSuit !== undefined
+      ? [
+          {
+            id: `layout-${m.id}`,
+            name: 'Accident Details',
+            itemId: `layout-item-${m.id}`,
+            index: 0,
+            values: [
+              ...(m.dateOfLoss ? [{ key: 'DateOfAccident', value: m.dateOfLoss }] : []),
+              ...(m.statuteDate ? [{ key: 'StatuteOfLimitationsDate', value: m.statuteDate }] : []),
+              ...(m.isInSuit !== undefined ? [{ key: 'InSuit', value: m.isInSuit ? 'Yes' : 'No' }] : []),
+            ],
+            events: [],
+          },
+        ]
+      : [],
 });
 
 export const contactToDto = (m: Matter) => ({

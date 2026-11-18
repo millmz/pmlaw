@@ -89,6 +89,11 @@ export function MattersPage() {
     ],
     [today],
   );
+  // A column nobody has data for is noise, not information: show it only
+  // when at least one matter in view carries the value.
+  const rows = data?.matters ?? [];
+  const has = { venue: rows.some((m) => m.jurisdiction), stage: rows.some((m) => m.isInSuit !== null && m.isInSuit !== undefined), statute: rows.some((m) => m.statuteDate) };
+  const shownColumns = columns.filter((c) => !(c.key in has) || has[c.key as keyof typeof has]);
 
   return (
     <div className="page-inner">
@@ -129,7 +134,7 @@ export function MattersPage() {
           <SkeletonRows rows={8} />
         ) : (
           <DataTable
-            columns={columns}
+            columns={shownColumns}
             rows={data.matters}
             rowKey={(m) => m.id}
             onRowClick={(m) => navigate(`/matters/${m.id}`)}
@@ -257,10 +262,12 @@ export function MatterDetailPage() {
             </div>
           )}
           <dl className="facts">
-            <Fact label="Date of loss">{fmtDate(m.dateOfLoss)}</Fact>
-            <Fact label="Jurisdiction">{m.jurisdiction || '—'}</Fact>
+            {m.dateOfLoss && <Fact label="Date of loss">{fmtDate(m.dateOfLoss)}</Fact>}
+            {m.jurisdiction && <Fact label="Jurisdiction">{m.jurisdiction}</Fact>}
             <Fact label="Practice area">{m.practiceArea || '—'}</Fact>
-            <Fact label="Stage">{m.isInSuit ? 'In suit' : m.isInSuit === false ? 'Pre-suit' : '—'}</Fact>
+            {typeof m.isInSuit === 'boolean' && <Fact label="Stage">{m.isInSuit ? 'In suit' : 'Pre-suit'}</Fact>}
+            <Fact label="Open tasks">{data.openTasks.length}</Fact>
+            <Fact label="Documents">{fileCount.toLocaleString()}</Fact>
           </dl>
           <div className="tabs">
             {TABS.map((t) => (

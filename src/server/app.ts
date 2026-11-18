@@ -182,7 +182,7 @@ export function buildApp(deps: AppDeps): FastifyInstance {
     const isToday = target.hasSame(now.setZone(FIRM_TZ), 'day');
 
     const events = await runTool(ctx, 'get_calendar_events', { scope: 'range', from: iso, to: iso });
-    const allTasks = await runTool(ctx, 'get_tasks', { status: 'all_open' });
+    const allTasks = await runTool(ctx, 'get_tasks', { status: 'all_open', limit: 5000 });
     // Tools answer { error } (no buckets) when the staff member isn't in the
     // mirror yet — degrade to empty lists, never 500 (blank-site bug).
     type DueRow = { dueDate?: string | null };
@@ -211,8 +211,8 @@ export function buildApp(deps: AppDeps): FastifyInstance {
   app.get('/api/tasks', async () => {
     const { isStatuteReminder } = await import('../core/dates.js');
     const [all, overdue] = [
-      await runTool(ctx, 'get_tasks', { status: 'all_open' }),
-      await runTool(ctx, 'get_tasks', { status: 'overdue' }),
+      await runTool(ctx, 'get_tasks', { status: 'all_open', limit: 5000 }),
+      await runTool(ctx, 'get_tasks', { status: 'overdue', limit: 5000 }),
     ];
     type Row = { subject: string };
     const allData = all.data as { dueToday?: Row[]; upcoming?: Row[] } | undefined;
@@ -238,6 +238,7 @@ export function buildApp(deps: AppDeps): FastifyInstance {
   app.get('/api/matters', async (req) => {
     const q = req.query as { clientName?: string; practiceArea?: string; status?: string };
     const result = await runTool(ctx, 'search_matters', {
+      limit: 10000, // the page shows every match, a page at a time
       ...(q.clientName ? { clientName: q.clientName } : {}),
       ...(q.practiceArea ? { practiceArea: q.practiceArea } : {}),
       ...(q.status ? { status: q.status as 'Open' | 'Closed' | 'any' } : {}),
@@ -246,7 +247,7 @@ export function buildApp(deps: AppDeps): FastifyInstance {
   });
 
   app.get<{ Params: { id: string } }>('/api/matters/:id', async (req) => {
-    const result = await runTool(ctx, 'get_matter_overview', { matterId: req.params.id });
+    const result = await runTool(ctx, 'get_matter_overview', { matterId: req.params.id, fileLimit: 100000 });
     return { ...(result.data as Record<string, unknown>), asOf: result.asOf };
   });
 
@@ -597,6 +598,40 @@ export function buildApp(deps: AppDeps): FastifyInstance {
       await probe('memo', () => sb.rawFirst(`/matters/${id}/memos`));
       await probe('file', () => sb.rawFirst(`/matters/${id}/documents/files`));
       await probe('folders', () => sb.rawFirst(`/matters/${id}/documents/folders`));
+    }
+    // Custom fields (statute date, date of loss, index number) live in a
+    // matter's layouts. Report the field KEYS in use across
+    // a few open injury matters — names of fields, never what is in them.
+    try {
+      const { mirror } = await import('./db/mirror.js');
+      const types = await mirror.typesInUse(ctx.db);
+      const sample = (await mirror.matters(ctx.db))
+        .filter((m) => m.status === 'Open' && /injur|malpractice/i.test(types.get(m.matterTypeId)?.category ?? ''))
+        .slice(0, 8);
+      const fields = new Map<string, { filled: number; of: number; looksLike: string }>();
+      let read = 0;
+      for (const m of sample) {
+        const res = (await sb.rawGet(`/matters/${m.id}/layouts`).catch(() => null)) as { value?: unknown } | null;
+        if (!res) continue;
+        read++;
+        for (const item of Array.isArray(res.value) ? (res.value as Record<string, unknown>[]) : []) {
+          for (const v of Array.isArray(item['values']) ? (item['values'] as Record<string, unknown>[]) : []) {
+            if (typeof v['key'] !== 'string') continue;
+            const id = v['key'].slice(0, 80); // the field's key only — an item's own name could be a person's
+            const f = fields.get(id) ?? { filled: 0, of: 0, looksLike: 'empty' };
+            f.of++;
+            if (v['value'] !== null && v['value'] !== undefined && v['value'] !== '') {
+              f.filled++;
+              f.looksLike = shapeOf(v['value']) as string;
+            }
+            fields.set(id, f);
+          }
+        }
+      }
+      out['layoutFields'] = { injuryMattersRead: read, fields: Object.fromEntries([...fields].slice(0, 300)) };
+      await probe('layoutDesign', () => sb.rawFirst('/layouts'));
+    } catch (e) {
+      out['layoutFields'] = `unavailable: ${String(e instanceof Error ? e.message : e).slice(0, 160)}`;
     }
     return { note: 'Field names and types only — no values. Paste this to map custom fields.', shapes: out };
   });

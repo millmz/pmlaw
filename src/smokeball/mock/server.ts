@@ -3,6 +3,7 @@ import { createHmac, randomUUID } from 'node:crypto';
 import { DateTime } from 'luxon';
 import type { FirmDataset, Task, CalendarEvent } from '../../core/types.js';
 import {
+  layoutsToDto,
   contactIdFor,
   contactToDto,
   eventToDto,
@@ -228,6 +229,15 @@ export function createMockSmokeball(data: FirmDataset, opts: MockOptions = {}): 
     const f = data.files.find((f) => f.id === req.params.fileId);
     if (!f) return reply.code(404).send({ message: 'not found' });
     return reply.type('application/octet-stream').send(f.content ?? '');
+  });
+
+  app.get('/layouts', async (req) =>
+    page([{ id: 'layout-design-accident', versionId: '1', name: 'Accident Details', lastUpdated: 0 }], req.query as Record<string, unknown>),
+  );
+  app.get<{ Params: { matterId: string } }>('/matters/:matterId/layouts', async (req, reply) => {
+    const m = data.matters.find((x) => x.id === req.params.matterId);
+    if (!m) return reply.code(404).send({ message: 'not found' });
+    return layoutsToDto(m);
   });
 
   app.get<{ Params: { matterId: string } }>('/matters/:matterId/memos', async (req) =>

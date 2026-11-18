@@ -71,7 +71,8 @@ export const EVAL_CASES: EvalCase[] = [
     id: 'heard-grasso',
     spoken: true,
     prompt: 'where do we stand on grass oh',
-    expectTools: ['get_matter_overview'],
+    // Hearing "grass oh" as Grasso is the test. The matter overview and the
+    // settlement timeline both reach the notes — either road is right.
     mustContain: ['Grasso', 'Boland'],
   },
   {

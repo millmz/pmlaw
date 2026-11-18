@@ -74,6 +74,13 @@ export async function buildDiag(ctx: ToolContext, worker: SyncWorker, extras: Re
   }
 
   const known = (ids: string[]) => ids.filter((id) => staffIds.has(id)).length;
+  const today = now.toISODate()!;
+  const bucketOf = (t: (typeof openTasks)[number]) => (!t.dueDate ? 'noDueDate' : t.dueDate < today ? 'overdue' : t.dueDate === today ? 'dueToday' : 'upcoming');
+  const mine = openTasks.filter((t) => t.assigneeIds.includes(me));
+  const myBuckets: Record<string, number> = { overdue: 0, dueToday: 0, upcoming: 0, noDueDate: 0 };
+  for (const t of mine) myBuckets[bucketOf(t)]!++;
+  const injury = open.filter((m) => /injur|malpractice/i.test(types.get(m.matterTypeId)?.category ?? ''));
+  const layoutsCursor = await count(sql`select count(*)::int as n from ${schema.syncState} where ${schema.syncState.recordType} = 'layouts'`);
   const taskAssignees = openTasks.flatMap((t) => t.assigneeIds);
   const eventAttendees = upcoming.flatMap((e) => e.attendeeIds);
 
@@ -84,17 +91,29 @@ export async function buildDiag(ctx: ToolContext, worker: SyncWorker, extras: Re
     user: {
       resolvedInStaffList: staffIds.has(me),
       staffCount: staff.length,
-      openTasksAssigned: openTasks.filter((t) => t.assigneeIds.includes(me)).length,
+      openTasksAssigned: mine.length,
+      tasksByBucket: myBuckets,
+      statuteRemindersAssigned: mine.filter((t) => isStatuteReminder(t.subject)).length,
+      overdueNeedingDecision: mine.filter((t) => bucketOf(t) === 'overdue' && !isStatuteReminder(t.subject)).length,
       eventsNext7Days: upcoming.filter((e) => e.attendeeIds.includes(me)).length,
     },
     matters: {
       total: matters.length,
       open: open.length,
-      withClientName: pct(open.filter((m) => m.clientFirstName !== '').length, open.length),
+      // A company client has no first name, so this counts people only.
+      withPersonClientName: pct(open.filter((m) => m.clientFirstName !== '').length, open.length),
       withStatuteDate: pct(open.filter((m) => m.statuteDate).length, open.length),
       withDateOfLoss: pct(open.filter((m) => m.dateOfLoss).length, open.length),
       inSuitKnown: pct(open.filter((m) => m.isInSuit !== null).length, open.length),
       withMatterType: pct(open.filter((m) => types.has(m.matterTypeId)).length, open.length),
+      injuryMatters: {
+        open: injury.length,
+        withStatuteDate: pct(injury.filter((m) => m.statuteDate).length, injury.length),
+        withDateOfLoss: pct(injury.filter((m) => m.dateOfLoss).length, injury.length),
+        inSuitKnown: pct(injury.filter((m) => m.isInSuit !== null).length, injury.length),
+      },
+      // Custom fields are read from each matter's layouts; this is the one-time catch-up.
+      customFieldCatchUp: worker.factsBackfill ?? (layoutsCursor > 0 ? 'done' : 'not started'),
       openByCategory: categories,
     },
     tasks: {
@@ -104,6 +123,7 @@ export async function buildDiag(ctx: ToolContext, worker: SyncWorker, extras: Re
       withAssignee: pct(openTasks.filter((t) => t.assigneeIds.length > 0).length, openTasks.length),
       assigneesFoundInStaffList: pct(known(taskAssignees), taskAssignees.length),
       statuteReminders: openTasks.filter((t) => isStatuteReminder(t.subject)).length,
+      statuteRemindersWithoutDueDate: openTasks.filter((t) => !t.dueDate && isStatuteReminder(t.subject)).length,
       overdue: openTasks.filter((t) => t.dueDate && t.dueDate < now.toISODate()!).length,
     },
     calendar: {

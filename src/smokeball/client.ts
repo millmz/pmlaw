@@ -30,10 +30,12 @@ import {
   adaptMemo,
   adaptStaff,
   adaptTask,
+  matterFactsFrom,
   staffUserId,
   toEventDto,
   toTaskDto,
   type AdaptedMatter,
+  type MatterFacts,
 } from './adapt.js';
 
 type Raw = Record<string, unknown>;
@@ -167,6 +169,16 @@ export class SmokeballClient {
     return xs.filter((x): x is T => x !== null);
   }
 
+  /** A raw response, un-adapted — for /inspect only. */
+  rawGet(path: string): Promise<Raw> {
+    return this.get<Raw>(path);
+  }
+  /** Statute date, date of loss and suit status from a matter's layouts —
+   *  Smokeball's custom fields, which the matter list does not carry. */
+  async matterFacts(matterId: string): Promise<MatterFacts> {
+    const res = await this.get<Raw>(`/matters/${matterId}/layouts`);
+    return matterFactsFrom(res['value'] ?? res);
+  }
   /** First raw record of a paged endpoint, un-adapted — for /inspect only. */
   async rawFirst(path: string): Promise<Raw | null> {
     const sep = path.includes('?') ? '&' : '?';

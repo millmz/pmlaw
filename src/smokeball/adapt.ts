@@ -185,26 +185,48 @@ export function findItem<T>(node: unknown, key: RegExp, read: (v: unknown) => T 
   return undefined;
 }
 
+/** The three facts PAM needs that Smokeball keeps as custom fields. */
+export interface MatterFacts {
+  dateOfLoss?: string;
+  statuteDate?: string;
+  isInSuit?: boolean;
+}
+
+/**
+ * Statute date, date of loss and suit status, read out of custom-field data.
+ * On the real API these live in a matter's LAYOUTS
+ * (`GET /matters/{id}/layouts` → `[{ name, values: [{ key, value }] }]`),
+ * and every firm names its fields in its own words — so the search is by
+ * key NAME, and a value only counts when it really is a date.
+ */
+export function matterFactsFrom(node: unknown): MatterFacts {
+  const top = (node && typeof node === 'object' && !Array.isArray(node) ? node : {}) as Raw;
+  const dateOfLoss =
+    dateOnly(top['dateOfLoss'] ?? top['DateOfLoss']) ??
+    findItem(node, /date.?of.?(loss|accident|incident|injury|occurrence)|(accident|incident|loss|injury).?date|^dol\b/i, strictDate);
+  const statuteDate =
+    dateOnly(top['statuteDate'] ?? top['StatuteOfLimitations']) ??
+    findItem(node, /statute|limitation|^sol\b|^sol.?date/i, strictDate);
+  const isInSuit =
+    typeof top['isInSuit'] === 'boolean'
+      ? top['isInSuit']
+      : findItem(node, /in.?suit|suit.?filed|index.?(no|num)|date.?(suit.?)?filed|docket.?(no|num)/i, (v): boolean | undefined => {
+          if (typeof v === 'boolean') return v;
+          if (typeof v !== 'string' || v.trim() === '') return undefined;
+          if (/^(no|false)$/i.test(v.trim())) return false;
+          return /^(n\/a|none|unknown)$/i.test(v.trim()) ? undefined : true;
+        });
+  return { ...(dateOfLoss ? { dateOfLoss } : {}), ...(statuteDate ? { statuteDate } : {}), ...(typeof isInSuit === 'boolean' ? { isInSuit } : {}) };
+}
+
 export function adaptMatter(raw: Raw): AdaptedMatter | null {
   if (raw['isDeleted'] === true) return null;
   if (isCore(raw, 'clientLastName', 'clients')) return { ...(raw as unknown as Matter), clientContactIds: [] };
   const opened = str(raw['openedDate']) ?? nowIso();
-  const items = (raw['items'] ?? {}) as Raw; // layout/custom data — key names to confirm on live data
   const title = str(raw['title']);
-  // Exact keys first; then a search by key NAME through the layout data —
-  // each tenant's layouts name these fields in their own words.
-  const dateOfLoss =
-    dateOnly(items['dateOfLoss'] ?? items['DateOfLoss']) ??
-    findItem(items, /date.?of.?(loss|accident|incident|injury|occurrence)|(accident|incident|loss|injury).?date|^dol\b/i, strictDate);
-  const statuteDate =
-    dateOnly(items['statuteDate'] ?? items['StatuteOfLimitations']) ??
-    findItem(items, /statute|limitation|^sol\b|^sol.?date/i, strictDate);
-  const isInSuit: unknown =
-    typeof items['isInSuit'] === 'boolean'
-      ? items['isInSuit']
-      : findItem(items, /in.?suit|suit.?filed|index.?(no|num)|date.?(suit.?)?filed|docket.?(no|num)/i, (v) =>
-          v === true || (typeof v === 'string' && v.trim() !== '' && !/^(no|false|n\/a|none)$/i.test(v.trim())) ? true : undefined,
-        );
+  // The list carries no custom fields on the real API (they arrive from the
+  // layouts endpoint); anything it does carry is still read.
+  const { dateOfLoss, statuteDate, isInSuit } = matterFactsFrom(raw['items'] ?? {});
   return {
     id: String(raw['id']),
     number: str(raw['number']) ?? String(raw['id']).slice(0, 8),

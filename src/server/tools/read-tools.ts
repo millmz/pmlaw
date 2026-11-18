@@ -6,6 +6,7 @@ import {
   appNow,
   classifyTask,
   daysOverdue,
+  isStatuteReminder,
   looksLikeCourt,
   nextWeekCourtRange,
   shouldShowNextWeekCourts,
@@ -165,12 +166,17 @@ const getTasksSchema = z.object({
     .enum(['overdue', 'due_today', 'upcoming', 'all_open'])
     .describe('Which bucket. Overdue is returned split: statute reminders vs needs-decision.'),
   matterId: z.string().optional(),
+  limit: z.number().int().min(1).max(5000).optional().describe('Most rows to return per bucket (default 40). Totals are always given.'),
 });
+
+/** Rows per bucket handed to the model unless it asks for more. A lawyer at a
+ *  real firm can carry thousands of open tasks; nobody reads that many aloud. */
+const TASK_ROWS = 40;
 
 const getTasks: ToolDef = {
   name: 'get_tasks',
   description:
-    'Open tasks for a staff member by status bucket (overdue / due today / upcoming / all open). Overdue is split into statute-of-limitations reminders (expected, never movable) and tasks needing a decision, ordered oldest first. Completed tasks are never included.',
+    'Open tasks for a staff member by status bucket (overdue / due today / upcoming / all open). Overdue is split into statute-of-limitations reminders (expected, never movable) and tasks needing a decision, ordered oldest first. Completed tasks are never included. Long lists are cut to `limit` rows per bucket with the true totals in `totals` — when a list is cut, say how many there are in all and offer to narrow by matter. Statute reminders and undated tasks are counted, not listed.',
   paramsSchema: getTasksSchema,
   run: async (ctx, raw) => {
     const p = getTasksSchema.parse(raw);
@@ -214,35 +220,59 @@ const getTasks: ToolDef = {
     const byBucket = (bucket: string) =>
       classified.filter((c) => c.status === bucket).sort((a, b) => (a.task.dueDate ?? '').localeCompare(b.task.dueDate ?? ''));
 
+    const limit = p.limit ?? TASK_ROWS;
+    const cut = <T,>(rows: T[]): T[] => rows.slice(0, limit);
+    const isStatute = (c: (typeof classified)[number]) => isStatuteReminder(c.task.subject);
+    const cutNote = (shown: number, total: number, what: string) =>
+      total > shown ? { [`${what}Note`]: `Showing the first ${shown} of ${total}. Say the total and offer to narrow by matter.` } : {};
+
     let data: unknown;
     let cited: (typeof classified)[number][];
     if (p.status === 'overdue') {
       const overdue = byBucket('overdue');
-      const { statuteReminders, needsDecision } = splitOverdue(
-        overdue.map((c) => ({ subject: c.task.subject, _c: c })),
-      );
+      const needs = overdue.filter((c) => !isStatute(c));
+      const statute = overdue.filter(isStatute);
+      const needsShown = cut(needs);
+      // Statute reminders are context, not a to-do list: a handful is plenty.
+      const statuteShown = statute.slice(0, Math.min(limit, p.limit ? limit : 10));
       data = {
         assignee: hit.label,
-        needsDecision: needsDecision.map((x) => project((x as { _c: (typeof classified)[number] })._c)),
+        totals: { needsDecision: needs.length, statuteReminders: statute.length },
+        needsDecision: needsShown.map(project),
+        ...cutNote(needsShown.length, needs.length, 'needsDecision'),
         statuteReminders: {
           note: 'Statute-of-limitations reminders are expected to remain overdue and must never be rescheduled.',
-          tasks: statuteReminders.map((x) => project((x as { _c: (typeof classified)[number] })._c)),
+          total: statute.length,
+          tasks: statuteShown.map(project),
         },
       };
-      cited = overdue;
+      cited = [...needsShown, ...statuteShown];
     } else if (p.status === 'all_open') {
+      const [overdue, dueToday, upcoming, undated] = [byBucket('overdue'), byBucket('due_today'), byBucket('upcoming'), byBucket('no_due_date')];
+      const undatedPlain = undated.filter((c) => !isStatute(c));
+      const shown = { overdue: cut(overdue), dueToday: cut(dueToday), upcoming: cut(upcoming), undated: cut(undatedPlain) };
       data = {
         assignee: hit.label,
-        overdue: byBucket('overdue').map(project),
-        dueToday: byBucket('due_today').map(project),
-        upcoming: byBucket('upcoming').map(project),
-        noDueDate: byBucket('no_due_date').map(project),
+        totals: { overdue: overdue.length, dueToday: dueToday.length, upcoming: upcoming.length, noDueDate: undated.length },
+        overdue: shown.overdue.map(project),
+        ...cutNote(shown.overdue.length, overdue.length, 'overdue'),
+        dueToday: shown.dueToday.map(project),
+        ...cutNote(shown.dueToday.length, dueToday.length, 'dueToday'),
+        upcoming: shown.upcoming.map(project),
+        ...cutNote(shown.upcoming.length, upcoming.length, 'upcoming'),
+        noDueDate: {
+          total: undated.length,
+          statuteReminders: undated.length - undatedPlain.length,
+          note: 'Undated statute-of-limitations reminders are counted only. The tasks listed here are the other undated ones.',
+          tasks: shown.undated.map(project),
+        },
       };
-      cited = classified;
+      cited = [...shown.overdue, ...shown.dueToday, ...shown.upcoming, ...shown.undated];
     } else {
       const bucket = byBucket(p.status);
-      data = { assignee: hit.label, tasks: bucket.map(project) };
-      cited = bucket;
+      const shown = cut(bucket);
+      data = { assignee: hit.label, total: bucket.length, tasks: shown.map(project), ...cutNote(shown.length, bucket.length, 'tasks') };
+      cited = shown;
     }
 
     return {
@@ -263,12 +293,14 @@ const searchMattersSchema = z.object({
     .optional()
     .describe('e.g. "Personal Injury", "Criminal", "Medical Malpractice"'),
   status: z.enum(['Open', 'Closed', 'any']).optional().describe('Defaults to Open.'),
+  limit: z.number().int().min(1).max(10000).optional().describe('Most matters to return (default 40). `count` is always the true total.'),
 });
+const MATTER_ROWS = 40;
 
 const searchMatters: ToolDef = {
   name: 'search_matters',
   description:
-    'Search matters by client name and/or practice area. Defaults to open matters only. When several clients share a name, ALL matches are returned — present them and ask the user to choose; never silently pick one.',
+    'Search matters by client name and/or practice area. Defaults to open matters only. When several clients share a name, ALL matches are returned — present them and ask the user to choose; never silently pick one. A broad search returns the first `limit` matters with the true total in `count`.',
   paramsSchema: searchMattersSchema,
   run: async (ctx, raw) => {
     const p = searchMattersSchema.parse(raw);
@@ -304,9 +336,14 @@ const searchMatters: ToolDef = {
       }
     }
 
+    const total = hits.length;
+    const shownHits = hits.slice(0, p.limit ?? MATTER_ROWS);
     return {
       data: {
-        count: hits.length,
+        count: total,
+        ...(total > shownHits.length
+          ? { showing: shownHits.length, note: `Showing the first ${shownHits.length} of ${total} matters. Give the total, and ask for a client name or practice area to narrow it — do not read a partial list as if it were complete.` }
+          : {}),
         ambiguous: p.clientName !== undefined && hits.length > 1,
         ...(heardAs
           ? {
@@ -314,7 +351,7 @@ const searchMatters: ToolDef = {
               note: `No client is spelled "${heardAs}". These are the closest names — if one is clearly what was meant, use it and say whose file you pulled; if two are plausible, ask which.`,
             }
           : {}),
-        matters: hits.map((m) => ({
+        matters: shownHits.map((m) => ({
           id: m.id,
           label: matterLabel(m),
           practiceArea: typeById.get(m.matterTypeId)?.category ?? 'Unknown',
@@ -324,7 +361,7 @@ const searchMatters: ToolDef = {
           statuteDate: m.statuteDate,
         })),
       },
-      citations: hits.map((m) => cite('matter', m.id, matterLabel(m))),
+      citations: shownHits.map((m) => cite('matter', m.id, matterLabel(m))),
       asOf: await asOfNow(ctx.db),
     };
   },
@@ -332,7 +369,9 @@ const searchMatters: ToolDef = {
 
 const getMatterOverviewSchema = z.object({
   matterId: z.string().describe('Matter id from search_matters.'),
+  fileLimit: z.number().int().min(0).max(100000).optional().describe('Most files to list, newest first (default 40). Folder totals are always given.'),
 });
+const FILE_ROWS = 40;
 
 const getMatterOverview: ToolDef = {
   name: 'get_matter_overview',
@@ -360,6 +399,13 @@ const getMatterOverview: ToolDef = {
     const folderRows = await ctx.db.select().from(schema.folders).where(eq(schema.folders.matterId, p.matterId));
     const fileRows = await ctx.db.select().from(schema.files).where(eq(schema.files.matterId, p.matterId));
     const folderById = new Map(folderRows.map((f) => [f.id, f.name]));
+    // A busy file holds thousands of documents and emails. The newest few
+    // are listed; every folder's true count is given alongside.
+    const fileLimit = p.fileLimit ?? FILE_ROWS;
+    const folderOf = (f: (typeof fileRows)[number]) => (f.folderId ? (folderById.get(f.folderId) ?? 'Unfiled') : 'Unfiled');
+    const listedFiles = fileRows.length > fileLimit ? [...fileRows].sort((a, b) => b.dateCreated.localeCompare(a.dateCreated)).slice(0, fileLimit) : fileRows;
+    const fileCounts: Record<string, number> = {};
+    for (const f of fileRows) fileCounts[folderOf(f)] = (fileCounts[folderOf(f)] ?? 0) + 1;
 
     const citations: Citation[] = [
       cite('matter', m.id, matterLabel(m)),
@@ -400,11 +446,15 @@ const getMatterOverview: ToolDef = {
           lastEditedBy: staffById.get(memo.updatedById) ?? memo.updatedById,
           lastEditedAt: memo.updatedAt,
         })),
+        fileCounts,
+        ...(fileRows.length > listedFiles.length
+          ? { filesNote: `Only the ${listedFiles.length} newest of ${fileRows.length} files are listed below; fileCounts has every folder's total.` }
+          : {}),
         filesByFolder: Object.fromEntries(
-          [...folderRows.map((f) => f.name), 'Unfiled'].map((name) => [
+          [...new Set([...folderRows.map((f) => f.name), 'Unfiled'])].map((name) => [
             name,
-            fileRows
-              .filter((f) => (f.folderId ? folderById.get(f.folderId) === name : name === 'Unfiled'))
+            listedFiles
+              .filter((f) => folderOf(f) === name)
               .map((f) => ({ id: f.id, name: f.name, created: f.dateCreated, from: f.emailFrom, to: f.emailTo })),
           ]),
         ),

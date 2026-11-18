@@ -149,3 +149,42 @@ describe('voice: a misheard client name still finds the file', () => {
     expect((none.data as { count: number }).count).toBe(0);
   });
 });
+
+describe('firm-scale results are cut to a page, with the true totals', () => {
+  it('get_tasks: rows are capped per bucket, totals are whole, undated statute reminders are only counted', async () => {
+    const all = await runTool(ctx, 'get_tasks', { status: 'all_open', limit: 5000 });
+    const full = all.data as { totals: Record<string, number>; dueToday: unknown[]; noDueDate: { total: number; statuteReminders: number; tasks: unknown[] } };
+    expect(full.dueToday.length).toBe(full.totals['dueToday']);
+    const cut = await runTool(ctx, 'get_tasks', { status: 'all_open', limit: 3 });
+    const d = cut.data as typeof full & { dueTodayNote?: string };
+    expect(d.dueToday).toHaveLength(3);
+    expect(d.totals['dueToday']).toBe(full.totals['dueToday']);
+    expect(d.dueTodayNote).toMatch(/first 3 of/);
+    expect(d.noDueDate.tasks.length).toBeLessThanOrEqual(3);
+    expect(cut.citations.length).toBeLessThanOrEqual(12); // only what is shown is cited
+    expect((await validateCitations(db, cut.citations)).valid).toBe(true);
+  });
+  it('search_matters: a broad search returns a page and says how many there are', async () => {
+    const r = await runTool(ctx, 'search_matters', { limit: 4 });
+    const d = r.data as { count: number; showing?: number; note?: string; matters: unknown[] };
+    expect(d.matters).toHaveLength(4);
+    expect(d.count).toBeGreaterThan(4);
+    expect(d.showing).toBe(4);
+    expect(d.note).toMatch(/first 4 of/);
+    expect(r.citations).toHaveLength(4);
+  });
+  it('get_matter_overview: lists the newest files and counts the rest by folder', async () => {
+    const whole = (await runTool(ctx, 'get_matter_overview', { matterId: 'm-grasso' })).data as { filesByFolder: Record<string, unknown[]>; fileCounts: Record<string, number> };
+    const total = Object.values(whole.filesByFolder).reduce((n, f) => n + f.length, 0);
+    expect(Object.values(whole.fileCounts).reduce((a, b) => a + b, 0)).toBe(total);
+    const cut = (await runTool(ctx, 'get_matter_overview', { matterId: 'm-grasso', fileLimit: 1 })).data as typeof whole & { filesNote?: string };
+    expect(Object.values(cut.filesByFolder).reduce((n, f) => n + f.length, 0)).toBe(1);
+    expect(cut.filesNote).toMatch(/newest/);
+    expect(Object.values(cut.fileCounts).reduce((a, b) => a + b, 0)).toBe(total);
+  });
+  it('custom fields arrive from layouts: the synced matter carries its statute date and date of loss', async () => {
+    const m = (await runTool(ctx, 'get_matter_overview', { matterId: 'm-grasso' })).data as { matter: { statuteDate?: string | null; dateOfLoss?: string | null } };
+    expect(m.matter.statuteDate).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+    expect(m.matter.dateOfLoss).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+  });
+});

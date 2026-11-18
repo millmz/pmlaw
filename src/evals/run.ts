@@ -66,7 +66,10 @@ async function main() {
   let passed = 0;
   const failures: string[] = [];
 
-  for (const c of EVAL_CASES) {
+  // EVAL_ONLY=id1,id2 runs just those cases (handy when chasing one).
+  const only = (process.env['EVAL_ONLY'] ?? '').split(',').map((x) => x.trim()).filter(Boolean);
+  const cases = only.length ? EVAL_CASES.filter((c) => only.includes(c.id)) : EVAL_CASES;
+  for (const c of cases) {
     // EVAL_VOICE=1 runs every case the way the orb room does (spoken mode),
     // so the voice model is held to the same safety bar as typed chat.
     const turn = await runAgentTurn(ctx, llm, [], c.prompt, {}, { voice: process.env['EVAL_VOICE'] === '1' || c.spoken === true, spoken: c.spoken === true, alternatives: c.heardAlso ?? [] });
@@ -112,7 +115,7 @@ async function main() {
     }
   }
 
-  console.log(`\n${passed}/${EVAL_CASES.length} passed${failures.length ? ` — failing: ${failures.join(', ')}` : ''}`);
+  console.log(`\n${passed}/${cases.length} passed${failures.length ? ` — failing: ${failures.join(', ')}` : ''}`);
   await close();
   await mock.close();
   if (failures.length > 0) process.exit(1);

@@ -1,4 +1,4 @@
-import { eq, getTableColumns, inArray, sql } from 'drizzle-orm';
+import { eq, getTableColumns, getTableName, inArray, sql } from 'drizzle-orm';
 import { bumpMirror } from '../db/mirror.js';
 import { DateTime } from 'luxon';
 import type { SmokeballClient } from '../../smokeball/client.js';
@@ -169,7 +169,9 @@ export interface SyncProgress {
   startedAt: string;
 }
 
-type PerMatterKind = 'memos' | 'files' | 'folders';
+type PerMatterKind = 'memos' | 'layouts' | 'files' | 'folders';
+/** Matters whose custom fields are read per pass while the one-time catch-up runs. */
+const FACTS_BACKFILL_PER_PASS = 40;
 /** Per-matter resources refreshed in the background each incremental pass. */
 const ROLLING_REFRESH_PER_PASS = 4;
 const MATTER_TYPE_CATALOG_TTL_DAYS = 7;
@@ -227,9 +229,17 @@ export class SyncWorker {
     this.dirty = true;
     bumpMirror();
     const set: Record<string, unknown> = {};
+    // Statute date, date of loss and suit status come from a matter's
+    // layouts, not from the matter list — a list sync must never blank them.
+    const keep = table === schema.matters ? new Set(['dateOfLoss', 'statuteDate', 'isInSuit']) : new Set<string>();
     for (const [key, col] of Object.entries(getTableColumns(table))) {
       if (key === 'id') continue;
-      set[key] = key === 'syncedAt' ? sql`now()` : sql.raw(`excluded."${col.name}"`);
+      set[key] =
+        key === 'syncedAt'
+          ? sql`now()`
+          : keep.has(key)
+            ? sql.raw(`coalesce(excluded."${col.name}", "${getTableName(table)}"."${col.name}")`)
+            : sql.raw(`excluded."${col.name}"`);
     }
     const BATCH = 400;
     for (let i = 0; i < rows.length; i += BATCH) {
@@ -355,6 +365,7 @@ export class SyncWorker {
       }
       return ms.length;
     });
+    await one('layouts', () => this.refreshFacts(matterId));
     await one('files', async () => {
       const fls = await this.client.listFiles(matterId);
       const have = new Map(
@@ -378,6 +389,63 @@ export class SyncWorker {
       return fs.length;
     });
     this.refreshedAt.set(matterId, Date.now());
+  }
+
+  /** A matter's custom fields (statute date, date of loss, in suit). Only
+   *  what the layouts actually hold is written; nothing is ever blanked. */
+  private async refreshFacts(matterId: string): Promise<number> {
+    const facts = await this.client.matterFacts(matterId);
+    if (Object.keys(facts).length === 0) return 0;
+    const cur = (
+      await this.db
+        .select({ dateOfLoss: schema.matters.dateOfLoss, statuteDate: schema.matters.statuteDate, isInSuit: schema.matters.isInSuit })
+        .from(schema.matters)
+        .where(eq(schema.matters.id, matterId))
+    )[0];
+    if (!cur) return 0;
+    const changed = (Object.keys(facts) as (keyof typeof facts)[]).some((k) => cur[k] !== facts[k]);
+    if (changed) {
+      await this.db.update(schema.matters).set(facts).where(eq(schema.matters.id, matterId));
+      this.dirty = true;
+      bumpMirror();
+    }
+    return 1;
+  }
+
+  /** One-time catch-up for a mirror built before custom fields were read:
+   *  a batch per pass, injury matters first, until every open matter is done. */
+  private factsQueue: string[] | null = null;
+  private async backfillFacts(skip: Set<string>, counts: Record<string, number>): Promise<void> {
+    if (this.disabled.has('layouts') || (await this.getCursor('layouts'))) return;
+    if (!this.factsQueue) {
+      const types = new Map((await this.db.select({ id: schema.matterTypes.id, category: schema.matterTypes.category }).from(schema.matterTypes)).map((t) => [t.id, t.category ?? '']));
+      const open = (await this.db.select({ id: schema.matters.id, status: schema.matters.status, type: schema.matters.matterTypeId }).from(schema.matters)).filter((m) => m.status === 'Open');
+      const injury = (m: (typeof open)[number]) => (/injur|malpractice|negligen|accident/i.test(types.get(m.type) ?? '') ? 0 : 1);
+      this.factsQueue = open.sort((a, b) => injury(a) - injury(b)).map((m) => m.id);
+    }
+    for (const id of this.factsQueue.splice(0, FACTS_BACKFILL_PER_PASS)) {
+      if (skip.has(id) || this.disabled.has('layouts')) continue;
+      const f = this.failures.get('layouts') ?? { streak: 0, total: 0, sample: '' };
+      try {
+        counts['layouts'] = (counts['layouts'] ?? 0) + (await this.refreshFacts(id));
+        f.streak = 0;
+      } catch (e) {
+        f.streak++;
+        f.total++;
+        f.sample = String(e instanceof Error ? e.message : e).slice(0, 160);
+        if (f.streak >= 3) this.disabled.add('layouts');
+      }
+      this.failures.set('layouts', f);
+    }
+    if (this.factsQueue.length === 0 && !this.disabled.has('layouts')) {
+      await this.setCursor('layouts', DateTime.utc().toISO()!);
+      this.factsQueue = null;
+    }
+  }
+  /** Progress of that catch-up, for the health report. */
+  get factsBackfill(): { pending: number } | 'unavailable' | null {
+    if (this.disabled.has('layouts')) return 'unavailable';
+    return this.factsQueue ? { pending: this.factsQueue.length } : null;
   }
 
   // -------------------------------------------------------------- full sync
@@ -494,6 +562,7 @@ export class SyncWorker {
       this.setProgress('full', 'notes & documents', i, open.length);
       await this.refreshMatter(m.id, counts);
     }
+    if (!this.disabled.has('layouts')) await this.setCursor('layouts', startedAt);
     await this.setCursor('full', startedAt);
     return counts;
   }
@@ -545,6 +614,7 @@ export class SyncWorker {
       .slice(0, ROLLING_REFRESH_PER_PASS);
     for (const id of stale) targets.add(id);
     for (const id of targets) await this.refreshMatter(id, counts);
+    await this.backfillFacts(targets, counts);
 
     for (const type of ['matters', 'tasks', 'events']) await this.setCursor(type, startedAt);
     return counts;

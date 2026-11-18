@@ -80,16 +80,28 @@ the first sync — chat history, settings, memories, audit log all survive.
 Paste the output to Adam's assistant. It is **field names and types only —
 no values** — and it answers the two unknowns that only real data can:
 
-- Which keys under `matter.items` hold the **statute date** and **date of
-  loss** (the adapter currently guesses `statuteDate` / `StatuteOfLimitations`
-  and `dateOfLoss` / `DateOfLoss`).
+- Which **layout fields** hold the statute date, date of loss and index
+  number. On the real API a matter's custom fields are NOT on the matter:
+  they are served by `GET /matters/{id}/layouts` (`[{ values: [{ key, value }] }]`).
+  The sync reads that per open matter and finds the fields by key NAME
+  (anything like "statute", "limitation", "SOL", "date of
+  loss/accident/incident", "index number", "in suit"), counting a value only
+  when it really is a date. `inspect` lists the field keys in use across a few
+  open injury matters (`layoutFields`) — keys and fill counts, never values —
+  so a firm that names a field differently can be mapped in one line.
 - What a real **statute-reminder task title** looks like, so the never-move
   guard matches the firm's 6/3/1-month reminders exactly (it currently matches
   "statute", "SOL", "limitations").
 
-The adapter now also *searches* `matter.items` by key name (anything like
-"statute", "limitation", "SOL", "date of loss/accident/incident", "index
-number", "in suit"), so these may simply work — the inspect paste confirms it.
+**Learned on the first production health report (Nov 18):** statute date, date
+of loss and in-suit were 0% because only the matter list was being read; the
+firm carries ~13,000 open tasks, ~12,700 of them statute reminders and 89%
+with no due date. Every list handed to the assistant is therefore cut to a
+page with the true totals (`get_tasks`, `search_matters`, the file inventory in
+`get_matter_overview`, the settlement board), and undated statute reminders
+are counted, never listed. A mirror built before layouts were read catches up
+40 matters per sync pass, injury matters first (`customFieldCatchUp` in the
+health report).
 
 ### The Settle board on real data
 

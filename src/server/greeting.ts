@@ -50,7 +50,7 @@ export async function buildGreeting(ctx: ToolContext): Promise<Greeting> {
   type Tk = { subject: string };
   const evRes = await runTool(ctx, 'get_calendar_events', { scope: 'today' }).catch(() => null);
   const events = ((evRes?.data as { events?: Ev[] } | undefined)?.events ?? []).filter((e) => DateTime.fromISO(e.start) > now);
-  const tkRes = await runTool(ctx, 'get_tasks', { status: 'all_open' }).catch(() => null);
+  const tkRes = await runTool(ctx, 'get_tasks', { status: 'all_open', limit: 5000 }).catch(() => null);
   const buckets = (tkRes?.data ?? {}) as { dueToday?: Tk[]; overdue?: Tk[] };
   const dueToday = (buckets.dueToday ?? []).filter((t) => !isStatuteReminder(t.subject)).length;
   const overdue = (buckets.overdue ?? []).filter((t) => !isStatuteReminder(t.subject)).length;
