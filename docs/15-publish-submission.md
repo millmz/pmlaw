@@ -59,7 +59,8 @@ flagged **[NEEDS]**.
 | `firm/read` | firm identity / time zone |
 | `staff/read` | map the user and assignees; resolve note authors |
 | `mattertypes/read` | practice-area classification (PI / med-mal / criminal) |
-| `matters/read` | matter list, status, client refs, custom fields (statute date, date of loss) |
+| `matters/read` | matter list, status, client refs |
+| layouts (read) — *add-on request, Nov 18* | the matter's custom fields: statute-of-limitations date, date of loss, index number. Read only; PAM never writes layout data |
 | `contacts/read` | client names on matters (display only) |
 | `tasks/read` | daily task list, overdue triage, statute reminders |
 | `tasks/write` | reschedule a task's due date / create a task — only after the user confirms a preview card in the app |

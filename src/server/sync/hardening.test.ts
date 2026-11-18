@@ -208,14 +208,22 @@ describe('custom fields (statute date, date of loss, in suit) come from layouts'
   it('a firm whose app cannot read layouts still syncs; the gap is reported, not fatal', async () => {
     const opened = await openDb();
     const client = newClient();
+    let asked = 0;
     client.matterFacts = async () => {
-      throw new Error('403 Forbidden: not authorized (layouts/read)');
+      asked++;
+      throw new Error('smokeball GET /matters/x/layouts -> 403: {"Message":"User is not authorized to access this resource with an explicit deny"}');
     };
     const worker = new SyncWorker(opened.db, client);
     const counts = await worker.fullSync();
     expect(counts['matters']).toBe(14);
-    expect(worker.factsBackfill).toBe('unavailable');
+    expect(String(worker.factsBackfill)).toMatch(/^blocked: Smokeball refuses/);
     expect(JSON.stringify(worker.lastSync)).toMatch(/layouts/);
+    expect(asked).toBe(3); // three refusals and it stops asking
+    // …and it stays off the endpoint on later passes instead of re-trying every minute.
+    await worker.incrementalSync();
+    await worker.incrementalSync();
+    expect(asked).toBe(3);
+    expect((await opened.db.select().from(schema.syncState).where(eq(schema.syncState.recordType, 'layouts'))).length).toBe(0); // not recorded as done
     await opened.close();
   });
 });

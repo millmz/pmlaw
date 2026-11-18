@@ -15,6 +15,12 @@ check you can see before taking the next.
       staff/read tasks/read tasks/write webhooks/read webhooks/write` — plus
       **`contacts/read`** if offered (client names come from contacts; without
       it matters show their title instead).
+- [ ] **Layouts (read)** — NOT in the original request, and needed: statute
+      date, date of loss and index number are custom fields served by
+      `GET /matters/{id}/layouts`. Without it that call answers 403 ("explicit
+      deny") and the health report says `customFieldCatchUp: blocked…`. Ask
+      Smokeball to add it to the app; PAM picks it up within six hours or on
+      the next restart.
 - [ ] **Production auth domain.** The token endpoint for production is shown
       on the Production tab or in Smokeball's API docs. Staging was
       `datastaging-auth.smokeball.com`; production is most likely

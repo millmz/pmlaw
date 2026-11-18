@@ -170,6 +170,8 @@ export interface SyncProgress {
 }
 
 type PerMatterKind = 'memos' | 'layouts' | 'files' | 'folders';
+/** After a permission refusal on layouts, how long before asking again. */
+const LAYOUTS_RETRY_HOURS = 6;
 /** Matters whose custom fields are read per pass while the one-time catch-up runs. */
 const FACTS_BACKFILL_PER_PASS = 40;
 /** Per-matter resources refreshed in the background each incremental pass. */
@@ -205,6 +207,11 @@ export class SyncWorker {
   /** A resource that keeps failing (missing scope) is skipped for the rest of a run. */
   private failures = new Map<PerMatterKind, { streak: number; total: number; sample: string }>();
   private disabled = new Set<PerMatterKind>();
+  /** Set when Smokeball refuses the layouts endpoint outright (403). */
+  private layoutsBlockedUntil = 0;
+  private noteLayoutsFailure(message: string): void {
+    if (/\b403\b|not authori[sz]ed|forbidden|explicit deny/i.test(message)) this.layoutsBlockedUntil = Date.now() + LAYOUTS_RETRY_HOURS * 3_600_000;
+  }
 
   constructor(
     private db: Db,
@@ -281,6 +288,9 @@ export class SyncWorker {
     while (this.running) await this.running.catch(() => undefined);
     this.failures.clear();
     this.disabled.clear();
+    // A permission Smokeball has not granted will not appear mid-afternoon:
+    // stay off the endpoint (no three wasted calls every pass) and look again later.
+    if (Date.now() < this.layoutsBlockedUntil) this.disabled.add('layouts');
     const run = (async () => {
       try {
         const counts = await fn();
@@ -342,6 +352,7 @@ export class SyncWorker {
         f.streak++;
         f.total++;
         f.sample = String(e instanceof Error ? e.message : e).slice(0, 160);
+        if (kind === 'layouts') this.noteLayoutsFailure(f.sample);
         if (f.streak >= 3) this.disabled.add(kind);
       }
       this.failures.set(kind, f);
@@ -433,6 +444,7 @@ export class SyncWorker {
         f.streak++;
         f.total++;
         f.sample = String(e instanceof Error ? e.message : e).slice(0, 160);
+        this.noteLayoutsFailure(f.sample);
         if (f.streak >= 3) this.disabled.add('layouts');
       }
       this.failures.set('layouts', f);
@@ -443,7 +455,10 @@ export class SyncWorker {
     }
   }
   /** Progress of that catch-up, for the health report. */
-  get factsBackfill(): { pending: number } | 'unavailable' | null {
+  get factsBackfill(): { pending: number } | string | null {
+    if (Date.now() < this.layoutsBlockedUntil) {
+      return `blocked: Smokeball refuses this app the layouts endpoint (403). Statute date, date of loss and in-suit live there — ask Smokeball to add the Layouts read permission to the app. PAM asks again every ${LAYOUTS_RETRY_HOURS} hours and on restart.`;
+    }
     if (this.disabled.has('layouts')) return 'unavailable';
     return this.factsQueue ? { pending: this.factsQueue.length } : null;
   }
