@@ -7,6 +7,7 @@ import { getIdentity, getKnowledge } from '../identity.js';
 import { buildDynamicBlock, buildStableBlock, type SystemBlock } from './system-prompt.js';
 import { memoryLines } from '../tools/memory-tools.js';
 import { buildSnapshot } from './snapshot.js';
+import { voiceInputNote } from '../voice-hints.js';
 
 /**
  * The agent loop (docs/01): Claude calls tools from the closed registry until
@@ -107,6 +108,10 @@ export interface AgentTurnResult {
 export interface AgentTurnOptions {
   /** The answer will be spoken aloud: answer-first, plain sentences, brief. */
   voice?: boolean;
+  /** The QUESTION was spoken: the transcript may mangle names. */
+  spoken?: boolean;
+  /** Other ways the recognizer heard the whole question. */
+  alternatives?: string[];
 }
 
 /** Thinking blocks are bound to the exact conversation that produced them.
@@ -157,11 +162,12 @@ export async function runAgentTurn(
   const t0 = performance.now();
   const messages: LlmMessage[] = [...stripThinking(history), { role: 'user', content: userMessage }];
   const tools = toolDefinitions();
-  const [identity, knowledge, snapshot, memories] = await Promise.all([
+  const [identity, knowledge, snapshot, memories, voiceInput] = await Promise.all([
     getIdentity(ctx.db),
     getKnowledge(ctx.db),
     buildSnapshot(ctx),
     memoryLines(ctx.db),
+    opts.spoken ? voiceInputNote(ctx, userMessage, opts.alternatives).catch(() => '') : Promise.resolve(''),
   ]);
   const system: SystemBlock[] = [
     { text: buildStableBlock(identity, knowledge), cache: true },
@@ -173,6 +179,7 @@ export async function runAgentTurn(
         longConversation: history.length >= 28, // ~14 turns → drift checkpoint
         writesOff: ctx.writesEnabled === false,
         voice: opts.voice === true,
+        voiceInput,
       }),
     },
   ];

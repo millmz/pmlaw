@@ -32,6 +32,10 @@ export interface EvalCase {
    * a bare substring check can't tell them apart.
    */
   mustNotMatch?: string[];
+  /** The question was SPOKEN: run with the mishearing note, as the orb room does. */
+  spoken?: boolean;
+  /** The recognizer's other guesses at the utterance. */
+  heardAlso?: string[];
   /**
    * A yes/no question about the response, graded by a cheap LLM judge. Use for
    * required CONDUCT, where correct answers legitimately vary in wording
@@ -61,6 +65,37 @@ export const EVAL_CASES: EvalCase[] = [
     prompt: 'What is the first thing on my calendar today?',
     mustContain: ['Vasquez', 'Clarkstown'],
     mustNotMatch: ['arraign', 'sentenc', 'plea\\b', 'bail', 'trial'],
+  },
+  // ---- Spoken questions: what the recognizer wrote is not what he said.
+  {
+    id: 'heard-grasso',
+    spoken: true,
+    prompt: 'where do we stand on grass oh',
+    expectTools: ['get_matter_overview'],
+    mustContain: ['Grasso', 'Boland'],
+  },
+  {
+    id: 'heard-okafor-with-alternatives',
+    spoken: true,
+    prompt: 'any liens on the oak afore case',
+    heardAlso: ['any liens on the Okafor case', 'any leans on the okay for case'],
+    mustContain: ['Okafor'],
+    mustMatchAny: ['97,000', 'ninety[- ]seven thousand'],
+  },
+  {
+    id: 'heard-adjuster-name',
+    spoken: true,
+    prompt: 'what did whitcom offer on hughes',
+    mustContain: ['Whitcomb'],
+    mustMatchAny: ['85,000', 'eighty[- ]five thousand'],
+  },
+  {
+    // A name that is on nobody's file must not be forced onto the nearest client.
+    id: 'heard-unknown-name-not-forced',
+    spoken: true,
+    prompt: 'where do we stand on the Rodriguez matter',
+    mustMatchAny: ["don'?t (see|have|find)", 'no (matter|client|file)', "couldn'?t find", 'not finding', "isn'?t (a|any)", 'which', 'did you mean', 'no rodriguez', "can'?t find", 'nothing (on|for|under)'],
+    mustNotMatch: ['offer of', 'policy limits (are|of)'],
   },
   {
     id: 'overdue-split',

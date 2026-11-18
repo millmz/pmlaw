@@ -1,3 +1,4 @@
+import { PAUSE, pauseBeforeSending, readResults, soundsUnfinished, type RecogResult } from './listen-logic.js';
 /**
  * PAM's voice engine — TTS out (ElevenLabs relay with browser-synthesis
  * fallback), speech in (silence-commit recognition), and the iOS trap
@@ -328,25 +329,22 @@ export async function speak(text: string, onEnd: () => void): Promise<TtsPath> {
 // ---------------------------------------------------------------- speech in
 
 // Web Speech types aren't in lib.dom — minimal structural declarations.
-interface RecogAlternativeLike {
-  transcript: string;
-}
-interface RecogResultLike {
-  isFinal: boolean;
-  0: RecogAlternativeLike;
-}
 interface RecogEventLike {
-  results: ArrayLike<RecogResultLike>;
+  results: ArrayLike<RecogResult>;
 }
 interface RecognitionLike {
   continuous: boolean;
   interimResults: boolean;
+  maxAlternatives: number;
   lang: string;
   onresult: ((ev: RecogEventLike) => void) | null;
   onerror: ((ev: { error?: string }) => void) | null;
   onend: (() => void) | null;
+  onstart: (() => void) | null;
+  onaudiostart: (() => void) | null;
   start(): void;
   stop(): void;
+  abort?: () => void;
 }
 type RecognitionCtor = new () => RecognitionLike;
 const getRecognition = (): RecognitionCtor | undefined =>
@@ -355,114 +353,187 @@ const getRecognition = (): RecognitionCtor | undefined =>
   (window as unknown as { webkitSpeechRecognition?: RecognitionCtor }).webkitSpeechRecognition;
 
 export interface ListenSession {
+  /** Close the mic and discard what was heard. */
   stop: () => void;
+  /** "I'm done" — send what has been heard so far, now. Returns false when
+   *  nothing has been heard yet (the caller may treat that as a cancel). */
+  finish: () => boolean;
+}
+
+export interface ListenHandlers {
+  /** The microphone is actually open — speech before this moment is lost,
+   *  so the "go" cue belongs here, not at the tap. */
+  onReady?: () => void;
+  onPartial: (text: string) => void;
+  /** `alternatives` = other ways the recognizer heard the whole utterance. */
+  onCommit: (text: string, alternatives: string[]) => void;
+  onGiveUp: () => void;
+  onError: (reason: string) => void;
 }
 
 export const recognitionSupported = (): boolean => Boolean(getRecognition());
 
-/** Rebuild the utterance from a recognition event. The event carries EVERY
- *  result so far, so text must be rebuilt each time — appending re-added
- *  earlier phrases ("what's on what's on my calendar"). Pure, for tests. */
-export function readResults(results: ArrayLike<RecogResultLike>): { final: string; interim: string } {
-  let final = '';
-  let interim = '';
-  for (let i = 0; i < results.length; i++) {
-    const r = results[i]!;
-    if (r.isFinal) final += r[0]!.transcript;
-    else interim += r[0]!.transcript;
-  }
-  return { final: final.trim(), interim: interim.trim() };
-}
-
-/** How long a pause means "I'm done". Shorter once the recognizer itself has
- *  marked the phrase final; longer while it is still mid-word. */
-export const END_AFTER_FINAL_MS = 850;
-export const END_AFTER_INTERIM_MS = 1500;
 /** How long to wait for a first word before closing the mic. */
-const GIVE_UP_MS = 8000;
+const GIVE_UP_MS = 9000;
+const isMobile = (): boolean => /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
 
 /**
- * Continuous recognition with pause-based commit: a short quiet after a
- * finished phrase sends it; a long silence with no speech closes the mic.
+ * Listen with the browser's recognizer.
+ *
+ * What makes it good rather than merely working:
+ *  - the caller is told when the mic is REALLY open (first words are not
+ *    clipped by speaking into a recognizer that is still starting);
+ *  - the end of speech is judged from the words, not just the clock — a
+ *    finished sentence goes quickly, one that trails off ("move it to…")
+ *    is waited for;
+ *  - if the recognizer stops on its own mid-thought (phones do, after any
+ *    pause) it is reopened and the pieces are joined;
+ *  - a late error never throws away words already heard;
+ *  - the recognizer's second and third guesses come along, so a misheard
+ *    name can still be recovered downstream.
  */
-export function startListening(handlers: {
-  onPartial: (text: string) => void;
-  onCommit: (text: string) => void;
-  onGiveUp: () => void;
-  onError: (reason: string) => void;
-}): ListenSession | null {
+export function startListening(handlers: ListenHandlers): ListenSession | null {
   const Ctor = getRecognition();
   if (!Ctor) {
     handlers.onError('Speech recognition is not supported in this browser — try Chrome, Edge, or Safari.');
     return null;
   }
-  const rec = new Ctor();
-  rec.continuous = true;
-  rec.interimResults = true;
-  rec.lang = 'en-US';
-
-  let heard = '';
+  // Phones: one utterance per session is far more reliable than continuous
+  // mode (which stalls on iOS and repeats itself on Android).
+  const continuous = !isMobile();
+  const startedAt = performance.now();
+  let rec: RecognitionLike;
+  let carry = ''; // finished pieces from earlier recognizer sessions
+  let carryAlts: string[] = [];
+  let piece = { final: '', interim: '', alternatives: [] as string[] };
   let commitTimer: ReturnType<typeof setTimeout> | null = null;
-  let giveUpTimer: ReturnType<typeof setTimeout> | null = setTimeout(() => {
-    cleanup();
-    handlers.onGiveUp();
-  }, GIVE_UP_MS);
+  let giveUpTimer: ReturnType<typeof setTimeout> | null = null;
   let done = false;
+  let ready = false;
+  let restarts = 0;
 
-  const cleanup = () => {
-    if (done) return;
-    done = true;
+  const heard = (): string => `${carry} ${piece.final} ${piece.interim}`.replace(/\s+/g, ' ').trim();
+  const alternatives = (): string[] => {
+    const alts = piece.alternatives.length ? piece.alternatives.map((a) => `${carry} ${a}`.trim()) : carryAlts;
+    return alts.filter((a) => a && a !== heard()).slice(0, 3);
+  };
+  const clearTimers = () => {
     if (commitTimer) clearTimeout(commitTimer);
     if (giveUpTimer) clearTimeout(giveUpTimer);
+    commitTimer = giveUpTimer = null;
+  };
+  const close = () => {
+    done = true;
+    clearTimers();
     try {
-      rec.stop();
+      rec.onresult = rec.onerror = rec.onend = rec.onstart = rec.onaudiostart = null;
+      (rec.abort ?? rec.stop).call(rec);
     } catch {
       /* already stopped */
     }
   };
-
-  rec.onresult = (ev: RecogEventLike) => {
-    if (giveUpTimer) {
-      clearTimeout(giveUpTimer);
-      giveUpTimer = null;
-    }
-    const { final, interim } = readResults(ev.results);
-    heard = `${final} ${interim}`.trim();
-    handlers.onPartial(heard);
-    if (commitTimer) clearTimeout(commitTimer);
-    commitTimer = setTimeout(
-      () => {
-        const text = heard;
-        cleanup();
-        if (text) handlers.onCommit(text);
-        else handlers.onGiveUp();
-      },
-      interim ? END_AFTER_INTERIM_MS : END_AFTER_FINAL_MS,
-    );
-  };
-  rec.onerror = (ev: { error?: string }) => {
-    const had = heard;
-    cleanup();
-    if (had) handlers.onCommit(had); // keep what was said; don't lose a question to a late error
-    else if (ev.error === 'no-speech' || ev.error === 'aborted') handlers.onGiveUp(); // silent, by design
-    else if (ev.error === 'not-allowed' || ev.error === 'service-not-allowed')
-      handlers.onError('Microphone permission is blocked — allow the mic for this site in your browser settings.');
-    else handlers.onError(`Speech recognition error: ${ev.error ?? 'unknown'}`);
-  };
-  rec.onend = () => {
+  const commit = () => {
     if (done) return;
-    const text = heard;
-    cleanup();
-    if (text) handlers.onCommit(text);
+    const text = heard();
+    const alts = alternatives();
+    close();
+    if (text) handlers.onCommit(text, alts);
     else handlers.onGiveUp();
   };
-  try {
+  const armGiveUp = () => {
+    if (giveUpTimer) clearTimeout(giveUpTimer);
+    giveUpTimer = setTimeout(() => {
+      if (done) return;
+      if (heard()) commit();
+      else {
+        close();
+        handlers.onGiveUp();
+      }
+    }, GIVE_UP_MS);
+  };
+  const markReady = () => {
+    if (ready || done) return;
+    ready = true;
+    armGiveUp(); // the wait for a first word starts when the mic is open
+    handlers.onReady?.();
+  };
+
+  const open = () => {
+    rec = new Ctor();
+    rec.continuous = continuous;
+    rec.interimResults = true;
+    rec.maxAlternatives = 3;
+    rec.lang = 'en-US';
+    rec.onstart = () => setTimeout(markReady, 250); // fallback where onaudiostart never fires
+    rec.onaudiostart = markReady;
+    rec.onresult = (ev: RecogEventLike) => {
+      if (done) return;
+      markReady();
+      if (giveUpTimer) clearTimeout(giveUpTimer);
+      giveUpTimer = null;
+      piece = readResults(ev.results);
+      const text = heard();
+      handlers.onPartial(text);
+      if (commitTimer) clearTimeout(commitTimer);
+      commitTimer = setTimeout(commit, pauseBeforeSending(text, piece.interim === ''));
+    };
+    rec.onerror = (ev: { error?: string }) => {
+      if (done) return;
+      const err = ev.error ?? 'unknown';
+      if (err === 'no-speech' || err === 'aborted') return; // onend decides what happens next
+      if (heard()) return commit(); // keep what was said; don't lose a question to a late error
+      close();
+      if (err === 'not-allowed' || err === 'service-not-allowed')
+        handlers.onError('Microphone permission is blocked — allow the mic for this site in your browser settings.');
+      else handlers.onError(`Speech recognition error: ${err}`);
+    };
+    rec.onend = () => {
+      if (done) return;
+      const text = heard();
+      const waited = performance.now() - startedAt;
+      // The recognizer stopped by itself. Reopen it when the speaker plainly
+      // is not finished, or has not started yet and time remains.
+      const keepGoing = text ? soundsUnfinished(text) && restarts < 4 : waited < GIVE_UP_MS - 1500 && restarts < 4;
+      if (!keepGoing) return text ? commit() : (close(), handlers.onGiveUp());
+      restarts++;
+      carry = `${carry} ${piece.final} ${piece.interim}`.replace(/\s+/g, ' ').trim();
+      carryAlts = alternatives();
+      piece = { final: '', interim: '', alternatives: [] };
+      if (commitTimer) clearTimeout(commitTimer);
+      // If nothing more comes, what we have is the question.
+      if (carry) commitTimer = setTimeout(commit, PAUSE.trailingOff);
+      try {
+        open();
+      } catch {
+        commit();
+      }
+    };
     rec.start();
+  };
+
+  try {
+    open();
   } catch (e) {
     handlers.onError(`Could not start the microphone: ${String(e)}`);
     return null;
   }
-  return { stop: cleanup };
+  // If the mic never reports open (blocked prompt left unanswered), don't hang.
+  giveUpTimer = setTimeout(() => {
+    if (done || ready) return;
+    close();
+    handlers.onGiveUp();
+  }, 12_000);
+
+  return {
+    stop: () => {
+      if (!done) close();
+    },
+    finish: () => {
+      if (done || !heard()) return false;
+      commit();
+      return true;
+    },
+  };
 }
 
 /**
@@ -470,12 +541,7 @@ export function startListening(handlers: {
  * when the built-in one fails): record the question, detect the end of
  * speech from the microphone level, and have the server transcribe it.
  */
-export function startServerListening(handlers: {
-  onPartial: (text: string) => void;
-  onCommit: (text: string) => void;
-  onGiveUp: () => void;
-  onError: (reason: string) => void;
-}): ListenSession | null {
+export function startServerListening(handlers: ListenHandlers): ListenSession | null {
   if (!navigator.mediaDevices?.getUserMedia || typeof MediaRecorder === 'undefined') {
     handlers.onError('This browser cannot record audio — type your question instead.');
     return null;
@@ -518,7 +584,7 @@ export function startServerListening(handlers: {
         .then(async (res) => {
           const j = (await res.json().catch(() => ({}))) as { text?: string; error?: string };
           if (!res.ok) return handlers.onError(`Could not transcribe that (${j.error ?? res.status}) — type it instead.`);
-          if (j.text?.trim()) handlers.onCommit(j.text.trim());
+          if (j.text?.trim()) handlers.onCommit(j.text.trim(), []);
           else handlers.onGiveUp();
         })
         .catch(() => handlers.onError('Could not reach the server to transcribe that — type it instead.'));
@@ -536,6 +602,7 @@ export function startServerListening(handlers: {
         if (e.data.size) chunks.push(e.data);
       };
       recorder.start(250);
+      handlers.onReady?.();
       const started = performance.now();
       let lastLoud = 0;
       if (actx) {
@@ -577,8 +644,15 @@ export function startServerListening(handlers: {
       );
     });
 
-  // Tapping the orb while recording sends what was said so far.
-  return { stop: () => finish(spoke) };
+  return {
+    stop: () => finish(false),
+    // Tapping the orb while recording sends what was said so far.
+    finish: () => {
+      if (done || !spoke) return false;
+      finish(true);
+      return true;
+    },
+  };
 }
 
 export async function getDiagnostics(ttsConfigured: boolean): Promise<VoiceDiagnostics> {

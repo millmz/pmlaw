@@ -806,7 +806,9 @@ export function buildApp(deps: AppDeps): FastifyInstance {
         error: 'Chat isn’t configured yet — the server needs an ANTHROPIC_API_KEY.',
       });
     }
-    const { message, voice } = (req.body ?? {}) as { message?: string; voice?: boolean };
+    const { message, voice, spoken, heard } = (req.body ?? {}) as { message?: string; voice?: boolean; spoken?: boolean; heard?: unknown };
+    const alternatives = Array.isArray(heard) ? heard.filter((h): h is string => typeof h === 'string').slice(0, 3) : [];
+    const turnOpts = { voice: voice === true, spoken: spoken === true, alternatives };
     if (!message?.trim()) return reply.code(400).send({ error: 'Empty message.' });
 
     reply.raw.writeHead(200, {
@@ -880,7 +882,7 @@ export function buildApp(deps: AppDeps): FastifyInstance {
       const useVoiceModel = voice === true && deps.voiceLlm !== undefined && Date.now() > voiceModelDownUntil;
       let turn;
       try {
-        turn = await runAgentTurn(ctx, useVoiceModel ? deps.voiceLlm! : deps.llm, window, message, hooks, { voice: voice === true });
+        turn = await runAgentTurn(ctx, useVoiceModel ? deps.voiceLlm! : deps.llm, window, message, hooks, turnOpts);
       } catch (e) {
         // The fast voice model is unavailable to this key (or having a bad
         // minute): answer with the main model rather than not at all, and
@@ -888,7 +890,7 @@ export function buildApp(deps: AppDeps): FastifyInstance {
         if (!useVoiceModel || spoke) throw e;
         voiceModelDownUntil = Date.now() + 10 * 60_000;
         console.error(`[pam] voice model failed (${String(e instanceof Error ? e.message : e).slice(0, 160)}) — answering with the main model for the next 10 minutes`);
-        turn = await runAgentTurn(ctx, deps.llm, window, message, hooks, { voice: true });
+        turn = await runAgentTurn(ctx, deps.llm, window, message, hooks, turnOpts);
       }
       const tm = turn.timing;
       console.log(

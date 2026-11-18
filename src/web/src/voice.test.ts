@@ -60,19 +60,3 @@ describe('the iOS suspended-AudioContext trap', () => {
     expect(routeThroughAnalyserIfRunning(ctx, {})).toBeNull();
   });
 });
-
-describe('readResults (what the recognizer heard, rebuilt each event)', () => {
-  const r = (isFinal: boolean, transcript: string) => ({ isFinal, 0: { transcript } });
-  it('never repeats an earlier phrase when a later event arrives', async () => {
-    const { readResults } = await import('./voice.js');
-    // Event 1: one final phrase. Event 2: the SAME phrase plus a new interim one.
-    expect(readResults([r(true, "what's on")])).toEqual({ final: "what's on", interim: '' });
-    expect(readResults([r(true, "what's on"), r(false, ' my calendar')])).toEqual({ final: "what's on", interim: 'my calendar' });
-    expect(readResults([r(true, "what's on"), r(true, ' my calendar')]).final).toBe("what's on my calendar");
-  });
-  it('a finished phrase is sent sooner than one still being spoken', async () => {
-    const { END_AFTER_FINAL_MS, END_AFTER_INTERIM_MS } = await import('./voice.js');
-    expect(END_AFTER_FINAL_MS).toBeLessThan(1000);
-    expect(END_AFTER_INTERIM_MS).toBeGreaterThan(END_AFTER_FINAL_MS);
-  });
-});

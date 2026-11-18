@@ -4,6 +4,7 @@ import { streamChat, type Panel, type TurnTiming } from '../api.js';
 import { FlagButton } from '../flag.js';
 import type { OrbState } from '../orb-canvas.js';
 import { createOrb, type OrbLike } from '../orb-gl.js';
+import { isEcho } from '../listen-logic.js';
 import { SpeechQueue } from '../speech-queue.js';
 import {
   chime,
@@ -92,8 +93,16 @@ export function OrbPage({ chatEnabled }: { chatEnabled: boolean }) {
   const lastInputVoice = useRef(false);
   const queueRef = useRef<SpeechQueue | null>(null);
   const lastTtfw = useRef<number | null>(null); // time to first word, ms
-  const serverStt = useRef(!recognitionSupported()); // use server transcription
+  // Which ear: the browser's recognizer (instant, live words) or recording +
+  // server transcription (no live words, better with names and noise).
+  const serverStt = useRef(!recognitionSupported() || localStorage.getItem('pam-ear') === 'server');
+  const [ear, setEar] = useState<'browser' | 'server'>(serverStt.current ? 'server' : 'browser');
+  const lastHeard = useRef<{ text: string; alternatives: string[] } | null>(null);
   const captionsRef = useRef<HTMLDivElement>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
+  const lastSaid = useRef(''); // her last answer — so the mic never mistakes her own voice for a question
+  const echoRetries = useRef(0);
+  const [micReady, setMicReady] = useState(false);
   const [state, setState] = useState<OrbState>('idle');
   const [turns, setTurns] = useState<Turn[]>([]);
   const [note, setNote] = useState(''); // what she is doing right now
@@ -218,7 +227,7 @@ export function OrbPage({ chatEnabled }: { chatEnabled: boolean }) {
 
   // ------------------------------------------------------------------ ask
   const ask = useCallback(
-    async (text: string, viaVoice: boolean) => {
+    async (text: string, viaVoice: boolean, heardAlso: string[] = []) => {
       const question = text.trim();
       if (!question || stateRef.current === 'thinking') return;
       lastInputVoice.current = viaVoice;
@@ -295,7 +304,7 @@ export function OrbPage({ chatEnabled }: { chatEnabled: boolean }) {
             patchLast((t) => ({ ...t, pam: e.message, spoken: e.message.length, error: true }));
           }
         },
-        { voice: true },
+        { voice: true, ...(viaVoice ? { spoken: true, heard: heardAlso } : {}) },
       );
       setNote('');
       if (failed || !finalText) {
@@ -306,6 +315,7 @@ export function OrbPage({ chatEnabled }: { chatEnabled: boolean }) {
         return;
       }
       const shown = tidy(finalText);
+      lastSaid.current = finalText;
       patchLast((t) => ({ ...t, pam: shown, spoken: speaking ? Math.min(t.spoken, shown.length) : shown.length }));
       // She only says it on real wins (per her knowledge file) — so when she
       // does, the orb throws orange and green.
@@ -320,12 +330,28 @@ export function OrbPage({ chatEnabled }: { chatEnabled: boolean }) {
   const beginListening = useCallback(() => {
     primeAudio();
     listenRef.current?.stop();
+    setMicReady(false);
     const handlers = {
+      // The cue to speak comes when the mic is really open — words spoken
+      // into a recognizer that is still starting are simply lost.
+      onReady: () => {
+        setMicReady(true);
+        chime('listen');
+      },
       onPartial: (t: string) => setPartial(t),
-      onCommit: (t: string) => {
-        chime('heard');
+      onCommit: (t: string, alternatives: string[]) => {
         setPartial('');
-        void ask(t, true);
+        // Her own voice, caught by the mic as she finished? Not a question:
+        // listen again (a couple of times at most).
+        if (isEcho(t, lastSaid.current) && echoRetries.current < 2) {
+          echoRetries.current++;
+          setTimeout(() => stateRef.current === 'listening' && beginListening(), 250);
+          return;
+        }
+        echoRetries.current = 0;
+        lastHeard.current = { text: t, alternatives };
+        chime('heard');
+        void ask(t, true, alternatives);
       },
       onGiveUp: () => {
         setPartial('');
@@ -337,11 +363,18 @@ export function OrbPage({ chatEnabled }: { chatEnabled: boolean }) {
         // survive (no service, network) — switch to it for this visit.
         if (!serverStt.current && /error: (network|service-not-allowed|language-not-supported|audio-capture)/.test(reason)) {
           serverStt.current = true;
+          setEar('server');
           const again = startServerListening(handlers);
           if (again) {
             listenRef.current = again;
             return;
           }
+        } else if (serverStt.current && recognitionSupported() && /transcribe/.test(reason)) {
+          // Server transcription is not working (key, permission, network):
+          // go back to the browser's ear rather than leave him without one.
+          serverStt.current = false;
+          setEar('browser');
+          localStorage.removeItem('pam-ear');
         }
         setTurns((ts) => [...ts.slice(-3), { you: '', pam: reason, spoken: reason.length, error: true }]);
         setOrb('idle');
@@ -350,7 +383,6 @@ export function OrbPage({ chatEnabled }: { chatEnabled: boolean }) {
     const session = serverStt.current ? startServerListening(handlers) : startListening(handlers);
     if (session) {
       listenRef.current = session;
-      chime('listen');
       setOrb('listening');
     }
   }, [ask, setOrb]);
@@ -382,10 +414,14 @@ export function OrbPage({ chatEnabled }: { chatEnabled: boolean }) {
       interrupt();
       beginListening();
     } else if (stateRef.current === 'listening') {
+      // A second tap means "I'm done": send what was said. With nothing
+      // said yet, it closes the mic.
+      if (listenRef.current?.finish()) return;
       listenRef.current?.stop();
       setPartial('');
       setOrb('idle');
     } else if (stateRef.current === 'idle') {
+      echoRetries.current = 0;
       beginListening();
     }
   }, [beginListening, chatEnabled, interrupt, setOrb]);
@@ -443,9 +479,11 @@ export function OrbPage({ chatEnabled }: { chatEnabled: boolean }) {
       : state === 'thinking'
         ? note || 'One moment'
         : state === 'listening'
-          ? serverStt.current
-            ? 'Listening — tap when you’re done'
-            : 'Listening'
+          ? !micReady
+            ? 'Opening the microphone…'
+            : partial
+              ? 'Listening — tap to send'
+              : 'Listening — go ahead'
           : state === 'speaking'
             ? 'Tap the orb to interrupt'
             : 'Tap the orb and speak';
@@ -526,7 +564,26 @@ export function OrbPage({ chatEnabled }: { chatEnabled: boolean }) {
               const current = i === turns.length - 1;
               return (
                 <div key={i} className={`orb-turn${current ? ' current' : ''}${t.error ? ' error' : ''}`}>
-                  {t.you && <p className="orb-you">{t.you}</p>}
+                  {t.you &&
+                    (current && chatEnabled ? (
+                      // Misheard? One tap puts the question in the box to fix and resend.
+                      <button
+                        type="button"
+                        className="orb-you orb-you-edit"
+                        title="Not what you said? Tap to correct it"
+                        onClick={() => {
+                          if (stateRef.current === 'speaking') interrupt();
+                          if (stateRef.current === 'listening') listenRef.current?.stop();
+                          setOrb('idle');
+                          setInput(t.you);
+                          inputRef.current?.focus();
+                        }}
+                      >
+                        {t.you}
+                      </button>
+                    ) : (
+                      <p className="orb-you">{t.you}</p>
+                    ))}
                   {t.pam && (
                     <p className={`orb-say${t.pam.length > 300 ? ' long' : ''}`}>
                       <span className="said">{t.pam.slice(0, t.spoken)}</span>
@@ -585,6 +642,7 @@ export function OrbPage({ chatEnabled }: { chatEnabled: boolean }) {
         }}
       >
         <input
+          ref={inputRef}
           value={input}
           onChange={(e) => setInput(e.target.value)}
           placeholder={chatEnabled ? 'Or type a question…' : 'Chat unavailable'}
@@ -615,7 +673,31 @@ export function OrbPage({ chatEnabled }: { chatEnabled: boolean }) {
 
       {showDiag && diag && (
         <div className="orb-diag">
+          <div>
+            listening: {ear === 'browser' ? 'browser recognizer (live words)' : 'recorded, then transcribed on the server'}
+            {diag.recognitionSupported && (
+              <>
+                {' · '}
+                <button
+                  type="button"
+                  className="orb-diag-link"
+                  onClick={() => {
+                    const next = ear === 'browser' ? 'server' : 'browser';
+                    serverStt.current = next === 'server';
+                    setEar(next);
+                    if (next === 'server') localStorage.setItem('pam-ear', 'server');
+                    else localStorage.removeItem('pam-ear');
+                  }}
+                >
+                  {ear === 'browser' ? 'try high-accuracy listening' : 'back to the browser recognizer'}
+                </button>
+              </>
+            )}
+          </div>
           <div>recognition: {diag.recognitionSupported ? 'supported' : 'not in this browser — PAM transcribes on the server instead'}</div>
+          <div>
+            last heard: {lastHeard.current ? `“${lastHeard.current.text}”${lastHeard.current.alternatives.length ? ` (also: ${lastHeard.current.alternatives.map((a) => `“${a}”`).join(', ')})` : ''}` : 'nothing yet'}
+          </div>
           <div>microphone: {diag.micPermission}</div>
           <div>audio context: {diag.audioContextState}</div>
           <div>playback unlocked: {diag.audioUnlocked ? 'yes' : 'not yet — tap the orb once'}</div>

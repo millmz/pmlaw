@@ -147,11 +147,23 @@ matters, settlements, or chat.
 - **Voice.** With an ElevenLabs key she speaks in the chosen voice, streamed
   as it is generated; without one (or if the key fails) the browser's voice
   takes over — *System check* names which, and why.
-- **Listening.** Chrome, Edge, and Safari use the browser's recognizer. Other
-  browsers record the question and transcribe it through ElevenLabs (the
-  key needs speech-to-text permission); the recording is not kept.
-- **Keys.** Tap the orb or press Space to talk; tap or press Space again to
-  interrupt her; Escape quiets everything.
+- **Listening.** Chrome, Edge, and Safari use the browser's recognizer. The
+  "go" chime sounds when the microphone is actually open (words spoken
+  before it are lost). She sends a question when the sentence sounds
+  finished — sooner for a complete one, much later for one that trails off
+  ("move it to…") — and a second tap on the orb sends at once.
+- **Names.** Recognizers do not know the firm's names. For a spoken question
+  PAM compares what was heard with the clients, staff, adjusters, and
+  carriers on file and tells the model which names it may have meant; she
+  says the name she understood ("On Okafor: …"). If she still gets it wrong,
+  tap the quoted question to correct and resend it.
+- **High-accuracy listening.** *System check* in the orb room has a switch to
+  record the question and transcribe it through ElevenLabs instead (better
+  with names and noise, no live words; the key needs speech-to-text
+  permission; the recording is not kept). Browsers with no recognizer use
+  this automatically. *System check* also shows the last thing she heard.
+- **Keys.** Tap the orb or press Space to talk; again to send; again while
+  she is speaking to interrupt; Escape quiets everything.
 
 ## 4. Shadow week (the gate from docs/06)
 

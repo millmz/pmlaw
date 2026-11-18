@@ -126,6 +126,8 @@ describe('mock smokeball + client', () => {
       ),
     );
     expect(burst.some((r) => r.status === 429)).toBe(true);
+    // Let the burst's window pass, so the polite client is judged on its own traffic.
+    await new Promise((r) => setTimeout(r, 1100));
     // The client's limiter stays under budget: all succeed.
     const politeClient = new SmokeballClient({
       baseUrl: base,

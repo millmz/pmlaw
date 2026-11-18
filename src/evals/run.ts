@@ -59,6 +59,9 @@ async function main() {
     confirmations: new Map(),
   };
   const llm = await anthropicLlm();
+  // Production keeps the settlement board warm after every sync; its adjuster
+  // and carrier names are part of what a spoken question is checked against.
+  if (ctx.smokeball) await (await import('../server/settlement/engine.js')).buildSettlementBoard(ctx.db, ctx.smokeball, ctx.fixedNowIso);
 
   let passed = 0;
   const failures: string[] = [];
@@ -66,7 +69,7 @@ async function main() {
   for (const c of EVAL_CASES) {
     // EVAL_VOICE=1 runs every case the way the orb room does (spoken mode),
     // so the voice model is held to the same safety bar as typed chat.
-    const turn = await runAgentTurn(ctx, llm, [], c.prompt, {}, { voice: process.env['EVAL_VOICE'] === '1' });
+    const turn = await runAgentTurn(ctx, llm, [], c.prompt, {}, { voice: process.env['EVAL_VOICE'] === '1' || c.spoken === true, spoken: c.spoken === true, alternatives: c.heardAlso ?? [] });
     const text = turn.text.toLowerCase();
     const problems: string[] = [];
 

@@ -163,14 +163,14 @@ export async function streamChat(
   message: string,
   sessionId: string | null,
   onEvent: (e: ChatStreamEvent) => void,
-  opts: { voice?: boolean } = {},
+  opts: { voice?: boolean; spoken?: boolean; heard?: string[] } = {},
 ): Promise<void> {
   let res: Response;
   try {
     res = await fetch('/api/chat/stream', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ message, sessionId, ...(opts.voice ? { voice: true } : {}) }),
+      body: JSON.stringify({ message, sessionId, ...(opts.voice ? { voice: true } : {}), ...(opts.spoken ? { spoken: true, heard: (opts.heard ?? []).slice(0, 3) } : {}) }),
     });
   } catch {
     onEvent({ type: 'error', message: 'PAM’s server is not answering — check your connection and try again.' });

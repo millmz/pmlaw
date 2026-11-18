@@ -68,6 +68,8 @@ export function buildDynamicBlock(opts: {
   writesOff?: boolean;
   /** The reply will be spoken aloud in the orb room. */
   voice?: boolean;
+  /** For a spoken question: what was heard, and the names it may have meant. */
+  voiceInput?: string;
 }): string {
   const parts: string[] = [];
   const stamp = opts.now.toFormat("cccc, LLLL d, yyyy 'at' h:mm a");
@@ -88,6 +90,7 @@ export function buildDynamicBlock(opts: {
     );
   }
   if (opts.voice) parts.push(VOICE_MODE);
+  if (opts.voiceInput) parts.push(opts.voiceInput);
   if (opts.longConversation) {
     parts.push(
       'Checkpoint: this conversation has run long. Before answering, re-read your identity and operating rules above and make sure your voice has not drifted generic — short, spoken, specific, led by the answer.',

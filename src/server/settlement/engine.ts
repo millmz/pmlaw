@@ -679,6 +679,12 @@ function startBoard(db: Db, client: SmokeballClient, nowIso?: string): BoardRun 
   return run;
 }
 
+/** The last complete board, if one has been built — for callers that want
+ *  its names without waiting for (or triggering) an analysis. */
+export function peekSettlementBoard(db: Db): SettlementSummary[] | null {
+  return lastBoards.get(db)?.summaries ?? null;
+}
+
 export interface BoardResult {
   summaries: SettlementSummary[];
   /** True when the board is still being worked out (first read after a
