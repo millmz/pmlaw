@@ -1,7 +1,8 @@
 import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Link, useNavigate } from 'react-router-dom';
-import { fmtTime, type ApiEvent, type ApiTask } from '../api.js';
+import { api, fmtTime, type ApiEvent, type ApiTask } from '../api.js';
+import { dropInitials, EmptyState, Icon, Panel, SkeletonRows, splitMatter } from '../ui.js';
 import { primeAudio } from '../voice.js';
 
 /**
@@ -18,6 +19,8 @@ interface DayData {
   events: ApiEvent[];
   tasksDue: ApiTask[];
   asOf: string;
+  /** The firm's clock as the server sees it (fixed in the demo). */
+  nowIso?: string;
 }
 
 async function fetchDay(date?: string): Promise<DayData> {
@@ -59,6 +62,8 @@ export function TodayPage() {
     queryFn: () => fetchDay(selected),
     refetchInterval: 60_000,
   });
+  const { data: me } = useQuery({ queryKey: ['me'], queryFn: api.me });
+  const initials = me?.user.initials;
 
   const navigate = useNavigate();
   const briefMe = () => {
@@ -70,20 +75,21 @@ export function TodayPage() {
 
   const tabs = data ? weekdayTabs(data.todayIso) : [];
   const active = selected ?? data?.todayIso;
+  const now = data?.nowIso ? new Date(data.nowIso).getTime() : Date.now();
 
   return (
     <div className="page-inner">
-      {data && (
-        <header className="masthead">
-          <div className="firmline">Phillips &amp; Millman · Daily Docket</div>
-          <h2 className="docket-date">{data.label.replace('Today — ', '')}</h2>
-          <div className="double-rule" />
-          <button type="button" className="brief-btn" onClick={briefMe} title="PAM reads you the day: court, deadlines, what needs a decision">
-            <span className="brief-orb" aria-hidden="true" />
-            Brief me
-          </button>
-        </header>
-      )}
+      <header className="docket-head">
+        <div>
+          <div className="eyebrow">Daily docket</div>
+          <h2 className="docket-date">{data ? data.label.replace('Today — ', '') : ' '}</h2>
+        </div>
+        <button type="button" className="btn primary large brief-btn" onClick={briefMe} title="PAM reads you the day: court, deadlines, what needs a decision">
+          <span className="brief-orb" aria-hidden="true" />
+          Brief me
+        </button>
+      </header>
+
       {tabs.length > 0 && (
         <div className="daytabs" role="tablist" aria-label="Pick a day">
           {tabs.map((t) => (
@@ -103,82 +109,88 @@ export function TodayPage() {
 
       {isLoading || !data ? (
         <div className="card">
-          <div className="card-body">
-            <div className="skeleton" style={{ width: '40%' }} />
-            <div className="skeleton" />
-            <div className="skeleton" style={{ width: '70%' }} />
-          </div>
+          <SkeletonRows rows={5} />
         </div>
       ) : (
-        <>
-          <div className="card">
-            <div className="card-h">
-              {/* Masthead carries the date; Jeff's "August 5 calendar" titling kept for other days. */}
-              <h2>{data.isToday ? 'Schedule' : `${data.label} calendar`}</h2>
-              <span className="rule" />
-              <span className="count">{data.events.length} events</span>
-            </div>
-            <div className="card-body">
-              {data.events.length === 0 && (
-                <div className="empty">Nothing on the calendar {data.isToday ? 'today' : 'this day'}.</div>
-              )}
-              {data.events.map((e) => (
-                <div className="sched-row" key={e.id}>
-                  <div className="sched-time">
-                    {fmtTime(e.start)}
-                    <span className="end">to {fmtTime(e.end)}</span>
-                  </div>
-                  <div className="sched-body">
-                    <b>{e.subject}</b>
-                    <div className="meta">
-                      {e.location ? `${e.location}` : ''}
-                      {e.location && e.matter ? ' · ' : ''}
-                      {e.matterId && e.matter ? (
-                        <Link className="matter-chip" to={`/matters/${e.matterId}`}>
-                          {e.matter}
-                        </Link>
-                      ) : (
-                        e.matter
-                      )}
-                    </div>
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
+        <div className="today-grid">
+          {/* The date heads the page; Jeff's "August 5 calendar" titling is kept for other days. */}
+          <Panel title={data.isToday ? 'Schedule' : `${data.label} calendar`} count={`${data.events.length} event${data.events.length === 1 ? '' : 's'}`} flush>
+            {data.events.length === 0 ? (
+              <EmptyState icon="today" title={`Nothing on the calendar ${data.isToday ? 'today' : 'this day'}`} />
+            ) : (
+              <ol className="agenda">
+                {data.events.map((e) => {
+                  const past = data.isToday && new Date(e.end).getTime() < now;
+                  const live = data.isToday && new Date(e.start).getTime() <= now && new Date(e.end).getTime() >= now;
+                  const m = splitMatter(e.matter);
+                  return (
+                    <li className={`agenda-row${past ? ' past' : ''}${live ? ' live' : ''}`} key={e.id}>
+                      <div className="agenda-time">
+                        <b>{fmtTime(e.start)}</b>
+                        <span>{fmtTime(e.end)}</span>
+                      </div>
+                      <div className="agenda-mark" aria-hidden="true" />
+                      <div className="agenda-body">
+                        <div className="agenda-title">{dropInitials(e.subject, initials)}</div>
+                        <div className="agenda-meta">
+                          {live && <span className="badge badge-success"><span className="badge-dot" />Now</span>}
+                          {e.location && (
+                            <span className="agenda-where">
+                              <Icon name="court" size={13} />
+                              {e.location}
+                            </span>
+                          )}
+                          {e.matterId && e.matter ? (
+                            <Link className="matter-chip" to={`/matters/${e.matterId}`}>
+                              {m.client}
+                              {m.number && <span className="mono matter-no">{m.number}</span>}
+                            </Link>
+                          ) : (
+                            e.matter
+                          )}
+                        </div>
+                      </div>
+                    </li>
+                  );
+                })}
+              </ol>
+            )}
+          </Panel>
 
-          <div className="card">
-            <div className="card-h">
-              <h2>{data.isToday ? 'Tasks due today' : 'Tasks due this day'}</h2>
-              <span className="rule" />
-              <span className="count">{data.tasksDue.length}</span>
-            </div>
-            <div className="card-body">
-              {data.tasksDue.length === 0 && <div className="empty">Nothing due.</div>}
-              {data.tasksDue.map((t) => (
-                <div className="row" key={t.id}>
-                  <span className="grow">
-                    <b>{t.subject}</b>
-                    <div className="meta">
-                      {t.matterId && t.matter ? (
-                        <Link className="matter-chip" to={`/matters/${t.matterId}`}>
-                          {t.matter}
-                        </Link>
-                      ) : (
-                        t.matter
-                      )}
-                    </div>
-                  </span>
-                </div>
-              ))}
-            </div>
-          </div>
+          <Panel title={data.isToday ? 'Tasks due today' : 'Tasks due this day'} count={data.tasksDue.length} flush>
+            {data.tasksDue.length === 0 ? (
+              <EmptyState icon="tasks" title="Nothing due" />
+            ) : (
+              <ul className="tasklist">
+                {data.tasksDue.map((t) => {
+                  const m = splitMatter(t.matter);
+                  return (
+                    <li key={t.id}>
+                      <span className="task-tick" aria-hidden="true" />
+                      <div>
+                        <div className="task-title">{dropInitials(t.subject, initials)}</div>
+                        {t.matterId && t.matter ? (
+                          <Link className="matter-chip task-matter" to={`/matters/${t.matterId}`}>
+                            {m.client}
+                            {m.number && <span className="mono matter-no">{m.number}</span>}
+                          </Link>
+                        ) : (
+                          t.matter && <span className="meta">{t.matter}</span>
+                        )}
+                      </div>
+                    </li>
+                  );
+                })}
+              </ul>
+            )}
+          </Panel>
+        </div>
+      )}
 
-          <div className="empty" style={{ textAlign: 'center' }}>
-            Data as of {fmtTime(data.asOf)} · overdue and statute reminders live under{' '}
-            <Link to="/tasks" className="matter-chip">Tasks</Link>
-          </div>
-        </>
+      {data && (
+        <div className="page-foot">
+          Data as of {fmtTime(data.asOf)} · overdue items and statute reminders live under <Link to="/tasks">Tasks</Link>
+        </div>
       )}
     </div>
   );

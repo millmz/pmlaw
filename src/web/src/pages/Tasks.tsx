@@ -1,12 +1,14 @@
+import { useMemo } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Link, useNavigate } from 'react-router-dom';
-import type { ApiTask } from '../api.js';
+import { api, type ApiTask } from '../api.js';
+import { Badge, DataTable, dropInitials, EmptyState, fmtShortDate, fmtWeekday, Icon, Panel, SkeletonRows, splitMatter, Stat, type Column } from '../ui.js';
 
 /**
  * Tasks — the home for everything task-shaped (docs/10 §8): due today,
- * upcoming, overdue-needs-a-decision, and statute reminders tucked away.
+ * overdue-needs-a-decision, upcoming, and statute reminders tucked away.
  * "Move to…" opens chat pre-filled so rescheduling flows through PAM's
- * confirmation once the write action lands.
+ * confirmation.
  */
 
 interface TasksData {
@@ -27,130 +29,113 @@ async function fetchTasks(): Promise<TasksData> {
   return res.json() as Promise<TasksData>;
 }
 
-const fmtDue = (iso: string) =>
-  new Date(`${iso}T12:00:00`).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
-
 export function TasksPage() {
   const { data, isLoading } = useQuery({ queryKey: ['tasks'], queryFn: fetchTasks, refetchInterval: 60_000 });
+  const { data: me } = useQuery({ queryKey: ['me'], queryFn: api.me });
   const navigate = useNavigate();
+  const initials = me?.user.initials;
 
-  const moveViaChat = (t: ApiTask) => {
-    navigate('/chat', { state: { prefill: `Move "${t.subject}" to ` } });
-  };
+  const columns = useMemo(() => {
+    const moveViaChat = (t: ApiTask) => navigate('/chat', { state: { prefill: `Move "${t.subject}" to ` } });
+    const build = (kind: 'plain' | 'overdue' | 'statute'): Column<ApiTask>[] => [
+      {
+        key: 'due',
+        header: kind === 'overdue' ? 'Overdue' : 'Due',
+        width: '8.5rem',
+        sort: (t) => t.dueDate ?? null,
+        cell: (t) =>
+          kind === 'overdue' ? (
+            <Badge tone="danger">{t.daysOverdue}d late</Badge>
+          ) : t.dueDate ? (
+            <span className="due-cell">
+              {fmtShortDate(t.dueDate)}
+              <small>{fmtWeekday(t.dueDate)}</small>
+            </span>
+          ) : (
+            <span className="meta">No date</span>
+          ),
+      },
+      { key: 'task', header: 'Task', sort: (t) => dropInitials(t.subject, initials), cell: (t) => <span className="cell-main">{dropInitials(t.subject, initials)}</span> },
+      {
+        key: 'matter',
+        header: 'Matter',
+        width: '30%',
+        sort: (t) => splitMatter(t.matter).client || null,
+        cell: (t) => {
+          const m = splitMatter(t.matter);
+          return t.matterId && t.matter ? (
+            <Link className="matter-chip" to={`/matters/${t.matterId}`}>
+              {m.client}
+              {m.number && <span className="mono matter-no">{m.number}</span>}
+            </Link>
+          ) : (
+            <span className="meta">{t.matter ?? '—'}</span>
+          );
+        },
+      },
+      ...(kind === 'statute'
+        ? []
+        : [
+            {
+              key: 'act',
+              header: '',
+              align: 'right' as const,
+              width: '7.5rem',
+              cell: (t: ApiTask) => (
+                <button className="btn ghost small" onClick={() => moveViaChat(t)} title="Ask PAM to reschedule this task">
+                  Move to…
+                </button>
+              ),
+            },
+          ]),
+    ];
+    return { plain: build('plain'), overdue: build('overdue'), statute: build('statute') };
+  }, [navigate, initials]);
 
   if (isLoading || !data)
     return (
       <div className="page-inner">
-        <div className="card"><div className="card-body"><div className="skeleton" /><div className="skeleton" style={{ width: '65%' }} /></div></div>
+        <div className="card">
+          <SkeletonRows rows={6} />
+        </div>
       </div>
     );
 
+  const key = (t: ApiTask) => t.id;
   return (
     <div className="page-inner">
-      <Section title="Due today" count={data.dueToday.length} empty="Nothing due today.">
-        {data.dueToday.map((t) => (
-          <TaskRow key={t.id} t={t} onMove={moveViaChat} />
-        ))}
-      </Section>
-
-      <Section
-        title="Overdue — needs a decision"
-        count={data.needsDecision.length}
-        empty="Clean — nothing waiting on a decision."
-      >
-        {data.needsDecision.map((t) => (
-          <TaskRow key={t.id} t={t} overdue onMove={moveViaChat} />
-        ))}
-      </Section>
-
-      <Section title="Upcoming" count={data.upcoming.length} empty="Nothing scheduled ahead.">
-        {data.upcoming.map((t) => (
-          <TaskRow key={t.id} t={t} onMove={moveViaChat} />
-        ))}
-      </Section>
-
-      <div className="card">
-        <div className="card-body">
-          <details className="statute">
-            <summary>
-              Statute of limitations reminders <span className="count">{data.statuteReminders.tasks.length}</span>
-              <span className="pill info">tracked — leave as-is</span>
-            </summary>
-            <div className="statute-note">{data.statuteReminders.note}</div>
-            {data.statuteReminders.tasks.map((t) => (
-              <TaskRow key={t.id} t={t} statute />
-            ))}
-          </details>
-        </div>
+      <div className="stats">
+        <Stat label="Due today" value={data.dueToday.length} icon="today" />
+        <Stat label="Overdue" value={data.needsDecision.length} icon="alert" {...(data.needsDecision.length > 0 ? { tone: 'danger' as const } : {})} hint={data.needsDecision.length > 0 ? 'Each needs a decision' : 'Nothing waiting'} />
+        <Stat label="Upcoming" value={data.upcoming.length} icon="clock" />
+        <Stat label="Statute reminders" value={data.statuteReminders.tasks.length} icon="shield" hint="Tracked, never moved" />
       </div>
-    </div>
-  );
-}
 
-function Section({
-  title,
-  count,
-  empty,
-  children,
-}: {
-  title: string;
-  count: number;
-  empty: string;
-  children: React.ReactNode;
-}) {
-  return (
-    <div className="card">
-      <div className="card-h">
-        <h2>{title}</h2>
-        <span className="rule" />
-        <span className="count">{count}</span>
-      </div>
-      <div className="card-body">{count === 0 ? <div className="empty">{empty}</div> : children}</div>
-    </div>
-  );
-}
+      <Panel title="Due today" count={data.dueToday.length} flush>
+        <DataTable columns={columns.plain} rows={data.dueToday} rowKey={key} empty={<EmptyState icon="today" title="Nothing due today" />} />
+      </Panel>
 
-function TaskRow({
-  t,
-  overdue,
-  statute,
-  onMove,
-}: {
-  t: ApiTask;
-  overdue?: boolean;
-  statute?: boolean;
-  onMove?: (t: ApiTask) => void;
-}) {
-  return (
-    <div className="row">
-      <span className="t">
-        {overdue ? (
-          <span className="pill alert">{t.daysOverdue}d late</span>
-        ) : t.dueDate ? (
-          fmtDue(t.dueDate)
-        ) : (
-          '—'
-        )}
-      </span>
-      <span className="grow">
-        <b>{t.subject}</b>
-        <div className="meta">
-          {t.matterId && t.matter ? (
-            <Link className="matter-chip" to={`/matters/${t.matterId}`}>
-              {t.matter}
-            </Link>
-          ) : (
-            t.matter
-          )}
-        </div>
-      </span>
-      {onMove && !statute && (
-        <span className="act">
-          <button className="btn ghost small" onClick={() => onMove(t)} title="Ask PAM to reschedule this task">
-            Move to…
-          </button>
-        </span>
-      )}
+      <Panel title="Overdue — needs a decision" count={data.needsDecision.length} flush>
+        <DataTable columns={columns.overdue} rows={data.needsDecision} rowKey={key} rowTone={() => 'danger'} empty={<EmptyState icon="check" title="Nothing waiting on a decision" />} />
+      </Panel>
+
+      <Panel title="Upcoming" count={data.upcoming.length} flush>
+        <DataTable columns={columns.plain} rows={data.upcoming} rowKey={key} empty={<EmptyState icon="clock" title="Nothing scheduled ahead" />} />
+      </Panel>
+
+      <section className="card">
+        <details className="statute">
+          <summary>
+            <Icon name="chevronRight" size={16} className="chev" />
+            Statute of limitations reminders
+            <span className="count">{data.statuteReminders.tasks.length}</span>
+            <span className="space" />
+            <Badge tone="neutral" dot={false}>tracked — leave as-is</Badge>
+          </summary>
+          {data.statuteReminders.note && <div className="statute-note">{data.statuteReminders.note}</div>}
+          <DataTable columns={columns.statute} rows={data.statuteReminders.tasks} rowKey={key} empty={<EmptyState icon="shield" title="No statute reminders" />} />
+        </details>
+      </section>
     </div>
   );
 }

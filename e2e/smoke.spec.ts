@@ -50,7 +50,7 @@ test('day tabs switch the calendar to that day', async ({ page }) => {
 test('Tasks page holds due today, overdue split, and statute reminders', async ({ page }) => {
   await login(page);
   await page.getByRole('link', { name: 'Tasks' }).first().click();
-  await expect(page.getByText('Due today')).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Due today' })).toBeVisible();
   await expect(page.getByText('Overdue — needs a decision')).toBeVisible();
   await expect(page.getByText('22d late')).toBeVisible();
   const statute = page.locator('details.statute');
@@ -86,6 +86,7 @@ test('Matters (under More) flags ambiguity; notes render verbatim', async ({ pag
 
 test('text-size toggle enlarges the app and persists', async ({ page }) => {
   await login(page);
+  await page.getByRole('button', { name: 'Account and preferences' }).click(); // text size lives in the user menu
   await page.locator('.ts-toggle').click();
   await expect(page.locator('body')).toHaveAttribute('data-ts', 'lg');
   await page.reload();
@@ -131,7 +132,7 @@ test('Settlement board renders ranked cases with statuses, liens, and tap-to-cal
 
 test('the orb room: full-page takeover, reactor canvas, honest diagnostics', async ({ page }) => {
   await login(page);
-  await page.getByRole('link', { name: 'PAM', exact: true }).click();
+  await page.getByRole('link', { name: 'Talk to PAM' }).click();
   await expect(page).toHaveURL(/\/pam/);
   await expect(page.locator('.orb-canvas')).toBeVisible();
   await expect(page.locator('.rail')).toHaveCount(0); // takeover: no app chrome

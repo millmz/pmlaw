@@ -40,6 +40,8 @@ export interface Me {
   chatEnabled: boolean;
   /** False during the read-only shadow trial (PAM_WRITES=off). */
   writesEnabled?: boolean;
+  /** The firm's date (YYYY-MM-DD) as the server sees it. */
+  today?: string;
   user: { name: string; initials: string; staffId: string };
 }
 export interface MatterHit {

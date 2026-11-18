@@ -154,11 +154,14 @@ export function buildApp(deps: AppDeps): FastifyInstance {
         user = { name, initials, staffId: row.id };
       }
     }
+    const { appNow, FIRM_TZ } = await import('../core/dates.js');
     return {
       authed: authed(req),
       gated: Boolean(accessCode),
       chatEnabled: Boolean(deps.llm),
       writesEnabled: ctx.writesEnabled !== false,
+      // The firm's date as the server sees it — "days until" is counted from here.
+      today: appNow(ctx.fixedNowIso).setZone(FIRM_TZ).toISODate(),
       user,
     };
   });
@@ -198,6 +201,7 @@ export function buildApp(deps: AppDeps): FastifyInstance {
       events: (events.data as { events?: unknown[] })?.events ?? [],
       tasksDue,
       asOf: events.asOf,
+      nowIso: now.toISO(),
     };
   });
 

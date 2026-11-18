@@ -1,5 +1,15 @@
 # 12 — Design Direction: "Letterhead & Docket" (v3)
 
+> **Superseded by v4 — "Chambers"** (the enterprise revamp). What changed and why:
+>
+> - **One interface typeface.** Public Sans carries every label, table and control. Libre Caslon is kept only for the firm's own words — the date at the head of the docket, a client's name on a matter, what PAM says. Marcellus and the wide-tracked small caps are gone from the app.
+> - **Everything is a token** (`src/web/src/styles.css`): colour, type scale (rem, so A/A+ scales the whole product), spacing, radius, elevation. Light and dark are the same system with different values; the user picks Light / Dark / System in the account menu or Settings. Hurricane mode swaps the two brand colours and nothing else.
+> - **A product shell**: grouped, collapsible sidebar with one icon set (`Icon` in `src/web/src/ui.tsx` — no emoji), a top bar with breadcrumbs, ⌘K search (matters, pages, "Ask PAM: …"), honest status chips, Flag and an account menu with sign-out, and a status footer.
+> - **One kit** (`ui.tsx`): `Panel`, `DataTable` (sortable, paged, becomes labelled cards on a phone), `Badge`, `Stat`, `Segmented`, `EmptyState`, and one way to write a date. Every page is built from it.
+> - **Kept on purpose**: Jeff's quiet Today (one day: schedule and that day's tasks, nothing else), day tabs, big type, the orb room.
+>
+> The v3 notes below are history.
+
 Adopted 2026-08-04 after Adam asked for a high-end professional treatment and Jeff called v2 "somewhat generic." This document is the design contract — future UI work follows it.
 
 ## Concept

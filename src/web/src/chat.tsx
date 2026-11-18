@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { streamChat, type Citation } from './api.js';
+import { Icon } from './ui.js';
 
 /** Shared chat panel — desktop dock, drawer, and the mobile /chat tab.
  *  History is server-side: reloads resume the open conversation. */
@@ -93,18 +94,24 @@ export function ChatPanel({ chatEnabled, prefill }: { chatEnabled: boolean; pref
   return (
     <div className="chat-panel">
       <div className="chat-head">
-        <span className="chat-title">Ask PAM</span>
+        <span className="chat-title">
+          <span className="brief-orb" aria-hidden="true" />
+          Ask PAM
+        </span>
         {messages.length > 0 && (
           <button className="btn ghost small" onClick={() => void newConversation()} disabled={busy}>
-            + New conversation
+            New conversation
           </button>
         )}
       </div>
       <div className="chat-thread" ref={threadRef}>
         {loaded && messages.length === 0 && (
-          <div className="empty" style={{ padding: 20 }}>
-            Ask about your day, a matter, or a settlement. Every answer cites the Smokeball records
-            it came from.
+          <div className="chat-empty">
+            <span className="empty-icon">
+              <Icon name="sparkle" size={20} />
+            </span>
+            <b>What do you need?</b>
+            Ask about your day, a matter, or a settlement. Every answer cites the Smokeball records it came from.
           </div>
         )}
         {messages.map((m, i) => (

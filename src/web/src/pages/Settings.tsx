@@ -1,9 +1,11 @@
 import { useEffect, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
+import { setPrefs, usePrefs } from '../prefs.js';
+import { Badge, EmptyState, Icon, Panel, SkeletonRows } from '../ui.js';
 
 /**
- * Settings — Jeff's view is deliberately small: his voice, his game-day
- * colors. The identity/knowledge editors (how PAM thinks and what she knows)
+ * Settings — Jeff's view is deliberately small: his voice, how the screen
+ * looks, and what PAM has been taught. The identity/knowledge editors (how PAM thinks and what she knows)
  * are Adam's domain: they only render behind /settings?admin=1 so the page
  * never invites Jeff to rewire his own assistant.
  */
@@ -30,7 +32,7 @@ export function SettingsPage() {
   const [saved, setSaved] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [voiceId, setVoiceId] = useState('');
-  const [canes, setCanes] = useState(() => localStorage.getItem('pam-canes') === '1');
+  const prefs = usePrefs();
   const [memories, setMemories] = useState<Memory[]>([]);
   const [seedResult, setSeedResult] = useState<string | null>(null);
 
@@ -57,11 +59,6 @@ export function SettingsPage() {
   };
 
   useEffect(() => {
-    document.body.dataset['canes'] = canes ? '1' : '';
-    localStorage.setItem('pam-canes', canes ? '1' : '0');
-  }, [canes]);
-
-  useEffect(() => {
     fetch('/api/settings')
       .then((r) => (r.ok ? r.json() : Promise.reject(new Error(String(r.status)))))
       .then((d: SettingsData) => {
@@ -83,101 +80,136 @@ export function SettingsPage() {
     else setErr(`Saving ${key} failed.`);
   };
 
-  if (err && !data) return <div className="page-inner"><div className="empty">{err}</div></div>;
-  if (!data) return <div className="page-inner"><div className="skeleton" style={{ height: 120 }} /></div>;
+  if (err && !data)
+    return (
+      <div className="page-inner narrow">
+        <div className="card">
+          <EmptyState icon="alert" title={err}>Reload the page to try again.</EmptyState>
+        </div>
+      </div>
+    );
+  if (!data)
+    return (
+      <div className="page-inner narrow">
+        <div className="card">
+          <SkeletonRows rows={5} />
+        </div>
+      </div>
+    );
 
   return (
-    <div className="page-inner">
-      <div className="card">
-        <div className="card-h">
-          <h2>Voice</h2>
-          <span className="rule" />
-          {saved === 'elevenlabs_voice_id' && <span className="pill ok">saved</span>}
+    <div className="page-inner narrow">
+      <Panel title="Voice" actions={saved === 'elevenlabs_voice_id' ? <span className="pill ok">Saved</span> : undefined} flush>
+        <div className="set-row">
+          <div className="set-label">
+            <b>Premium voice</b>
+            <span>{data.ttsConfigured ? 'PAM speaks with her ElevenLabs voice.' : 'Not connected — PAM uses this device’s built-in voice until a voice key is added on the server.'}</span>
+          </div>
+          <div className="set-control">
+            <Badge tone={data.ttsConfigured ? 'success' : 'neutral'}>{data.ttsConfigured ? 'Connected' : 'Not connected'}</Badge>
+          </div>
         </div>
-        <div className="card-body">
-          <p className="meta" style={{ marginTop: 0 }}>
-            Premium voice: {data.ttsConfigured ? 'connected (ElevenLabs)' : 'not connected — add ELEVENLABS_API_KEY on the server; the browser voice covers until then.'}
-          </p>
-          <label className="meta" htmlFor="voiceid">ElevenLabs voice ID (optional — blank uses the default voice)</label>
-          <div style={{ display: 'flex', gap: 10, marginTop: 6 }}>
-            <input
-              id="voiceid"
-              className="input"
-              value={voiceId}
-              onChange={(e) => setVoiceId(e.target.value)}
-              placeholder="e.g. 21m00Tcm4TlvDq8ikWAM"
-            />
+        <div className="set-row">
+          <div className="set-label">
+            <label htmlFor="voiceid">ElevenLabs voice ID</label>
+            <span>Optional — leave blank to use the default voice.</span>
+          </div>
+          <div className="set-control">
+            <input id="voiceid" className="input" value={voiceId} onChange={(e) => setVoiceId(e.target.value)} placeholder="e.g. 21m00Tcm4TlvDq8ikWAM" />
             <button className="btn primary" onClick={() => void save('elevenlabs_voice_id', voiceId.trim())}>
               Save
             </button>
           </div>
         </div>
-      </div>
+      </Panel>
 
-      <div className="card">
-        <div className="card-h"><h2>Game day</h2><span className="rule" /></div>
-        <div className="card-body">
-          <label className="canes-toggle">
-            <input
-              type="checkbox"
-              checked={canes}
-              onChange={(e) => setCanes(e.target.checked)}
-              aria-label="Hurricane mode"
-            />
-            <span>
-              <b>Hurricane mode</b>
-              <span className="meta" style={{ display: 'block' }}>
-                Dresses the accents in Miami orange and Hurricane green — links, tabs, and trim.
-                The letterhead stays the firm&rsquo;s. Go Canes.
-              </span>
-            </span>
-          </label>
-        </div>
-      </div>
-
-      <div className="card">
-        <div className="card-h">
-          <h2>What PAM remembers</h2>
-          <span className="rule" />
-          <span className="count">{memories.length}</span>
-        </div>
-        <div className="card-body">
-          <p className="meta" style={{ marginTop: 0 }}>
-            Working preferences and firm process she has been taught — never client details. Tell her
-            &ldquo;remember that&hellip;&rdquo; to add one; forget anything here.
-          </p>
-          {memories.length === 0 && <div className="empty">Nothing yet. She learns as you talk.</div>}
-          {memories.map((m) => (
-            <div className="row" key={m.id}>
-              <span className="t" style={{ minWidth: 96 }}>
-                <span className="pill info">{m.type}</span>
-              </span>
-              <span className="grow">
-                <b>{m.hook}</b>
-                <div className="meta">{m.body}</div>
-              </span>
-              <span className="act">
-                <button className="btn ghost small" onClick={() => void forget(m)}>Forget</button>
-              </span>
+      <Panel title="Appearance" flush>
+        <div className="set-row">
+          <div className="set-label">
+            <b>Theme</b>
+            <span>Light, dark, or follow this device.</span>
+          </div>
+          <div className="set-control">
+            <div className="theme-seg inline">
+              {(
+                [
+                  ['light', 'Light', 'sun'],
+                  ['dark', 'Dark', 'moon'],
+                  ['system', 'System', 'monitor'],
+                ] as const
+              ).map(([value, label, icon]) => (
+                <button key={value} type="button" aria-pressed={prefs.theme === value} onClick={() => setPrefs({ theme: value })}>
+                  <Icon name={icon} size={16} />
+                  {label}
+                </button>
+              ))}
             </div>
-          ))}
+          </div>
         </div>
-      </div>
+        <div className="set-row">
+          <div className="set-label">
+            <label htmlFor="pref-large">Larger text</label>
+            <span>Makes everything on every page bigger.</span>
+          </div>
+          <div className="set-control">
+            <span className="toggle">
+              <input id="pref-large" type="checkbox" checked={prefs.largeText} onChange={(e) => setPrefs({ largeText: e.target.checked })} />
+              <span className="switch" />
+            </span>
+          </div>
+        </div>
+        <div className="set-row">
+          <div className="set-label">
+            <b>Hurricane mode</b>
+            <span>Dresses the accents in Miami orange and Hurricane green — buttons, links and trim. Go Canes.</span>
+          </div>
+          <div className="set-control">
+            <span className="toggle">
+              <input type="checkbox" checked={prefs.canes} onChange={(e) => setPrefs({ canes: e.target.checked })} aria-label="Hurricane mode" />
+              <span className="switch" />
+            </span>
+          </div>
+        </div>
+      </Panel>
+
+      <Panel title="What PAM remembers" count={memories.length} flush>
+        <div className="statute-note">
+          Working preferences and firm process she has been taught — never client details. Tell her &ldquo;remember that&hellip;&rdquo; to add one; forget anything here.
+        </div>
+        {memories.length === 0 ? (
+          <EmptyState icon="sparkle" title="Nothing yet. She learns as you talk." />
+        ) : (
+          <div>
+            {memories.map((m) => (
+              <div className="row" key={m.id}>
+                <span className="t">
+                  <Badge dot={false}>{m.type}</Badge>
+                </span>
+                <span className="grow">
+                  <b>{m.hook}</b>
+                  <div className="meta">{m.body}</div>
+                </span>
+                <span className="act">
+                  <button className="btn ghost small" onClick={() => void forget(m)}>Forget</button>
+                </span>
+              </div>
+            ))}
+          </div>
+        )}
+      </Panel>
 
       {admin && (
         <>
           <HealthCard />
-          <div className="card">
-            <div className="card-h"><h2>Staging tools</h2><span className="rule" /></div>
-            <div className="card-body">
-              <p className="meta" style={{ marginTop: 0 }}>
-                Creates one clearly-labeled test task (due today) and one test event (tomorrow 10:00) through the
-                live Smokeball API — proving reads and writes end to end. Both are safe to delete in Smokeball.
+          <Panel title="Staging tools">
+            <div className="stack">
+              <p className="meta">
+                Creates one clearly-labeled test task (due today) and one test event (tomorrow 10:00) through the live Smokeball API — proving reads and writes end to end. Both are safe to delete in Smokeball.
               </p>
-              <button className="btn primary" onClick={() => void seed()}>Seed a test task + event</button>
-              {seedResult && <div className="meta" style={{ marginTop: 10 }}>{seedResult}</div>}
+              <button className="btn" onClick={() => void seed()}>Seed a test task + event</button>
+              {seedResult && <div className="meta">{seedResult}</div>}
             </div>
-          </div>
+          </Panel>
           <Editor
             title="Who PAM is"
             hint="Her voice and manner — written like a note to a new hire. Changes apply on her very next reply."
@@ -195,7 +227,12 @@ export function SettingsPage() {
         </>
       )}
 
-      {err && <div className="empty" style={{ color: 'var(--alert)' }}>{err}</div>}
+      {err && (
+        <div className="notice warn" role="alert">
+          <Icon name="alert" size={17} />
+          <div>{err}</div>
+        </div>
+      )}
     </div>
   );
 }
@@ -215,26 +252,13 @@ function Editor({
 }) {
   const [text, setText] = useState(value);
   return (
-    <div className="card">
-      <div className="card-h">
-        <h2>{title}</h2>
-        <span className="rule" />
-        {savedFlag && <span className="pill ok">saved</span>}
+    <Panel title={title} actions={savedFlag ? <span className="pill ok">Saved</span> : undefined}>
+      <div className="stack">
+        <p className="meta">{hint}</p>
+        <textarea className="input editor" value={text} onChange={(e) => setText(e.target.value)} aria-label={title} />
+        <button className="btn primary" onClick={() => onSave(text)}>Save</button>
       </div>
-      <div className="card-body">
-        <p className="meta" style={{ marginTop: 0 }}>{hint}</p>
-        <textarea
-          className="input"
-          style={{ minHeight: 260, fontFamily: 'var(--serif)', fontSize: 16, lineHeight: 1.6, resize: 'vertical' }}
-          value={text}
-          onChange={(e) => setText(e.target.value)}
-          aria-label={title}
-        />
-        <div style={{ marginTop: 10 }}>
-          <button className="btn primary" onClick={() => onSave(text)}>Save</button>
-        </div>
-      </div>
-    </div>
+    </Panel>
   );
 }
 
@@ -251,23 +275,22 @@ function HealthCard() {
       .catch(() => undefined);
   }, []);
   return (
-    <div className="card">
-      <div className="card-h"><h2>Health check</h2><span className="rule" /></div>
-      <div className="card-body">
-        <p className="meta" style={{ marginTop: 0 }}>
-          A report on how well PAM is reading the firm — counts and percentages only. No client names, matter
-          numbers, notes, or figures appear in it, so it is safe to share when something needs checking.
+    <Panel title="Health check">
+      <div className="stack">
+        <p className="meta">
+          A report on how well PAM is reading the firm — counts and percentages only. No client names, matter numbers, notes, or figures appear in it, so it is safe to share when something needs checking.
         </p>
-        <a className="btn primary" href="/api/diag" target="_blank" rel="noreferrer">Open the health report</a>
+        <a className="btn primary" href="/api/diag" target="_blank" rel="noreferrer">
+          Open the health report
+          <Icon name="arrowUpRight" size={15} />
+        </a>
         {key && (
-          <div style={{ marginTop: 16 }}>
-            <div className="meta">
-              Diagnostics key — opens only the health pages (never Today, tasks, matters, or chat):
-            </div>
-            <div style={{ display: 'flex', gap: 10, alignItems: 'center', marginTop: 6, flexWrap: 'wrap' }}>
-              <code style={{ fontSize: 13, wordBreak: 'break-all' }}>{key}</code>
+          <div>
+            <div className="meta">Diagnostics key — opens only the health pages (never Today, tasks, matters, or chat):</div>
+            <div className="keybox">
+              <code>{key}</code>
               <button
-                className="btn ghost"
+                className="btn ghost small"
                 onClick={() => {
                   void navigator.clipboard?.writeText(key).then(() => {
                     setCopied(true);
@@ -281,6 +304,6 @@ function HealthCard() {
           </div>
         )}
       </div>
-    </div>
+    </Panel>
   );
 }

@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { api } from './api.js';
+import { Icon } from './ui.js';
 
 /**
  * "Something looks wrong" — one tap, a sentence, done. During the trial
@@ -37,7 +38,14 @@ export function FlagButton({ context, label = 'Flag', className = 'flag-btn' }: 
   return (
     <>
       <button type="button" className={className} onClick={() => setOpen(true)} title="Tell Adam something looks wrong or could be better">
-        {label}
+        {className === 'flag-btn' ? (
+          <>
+            <Icon name="flag" size={15} />
+            <span>{label}</span>
+          </>
+        ) : (
+          label
+        )}
       </button>
       {open && (
         <div className="flag-scrim" onClick={() => setOpen(false)}>
@@ -62,7 +70,7 @@ export function FlagButton({ context, label = 'Flag', className = 'flag-btn' }: 
                 {state === 'error' && <div className="flag-err">{err}</div>}
                 <div className="flag-actions">
                   <button type="button" className="btn ghost" onClick={() => setOpen(false)}>Cancel</button>
-                  <button type="button" className="btn" disabled={!note.trim() || state === 'sending'} onClick={() => void send()}>
+                  <button type="button" className="btn primary" disabled={!note.trim() || state === 'sending'} onClick={() => void send()}>
                     {state === 'sending' ? 'Sending…' : 'Send'}
                   </button>
                 </div>
