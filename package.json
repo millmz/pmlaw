@@ -2,7 +2,7 @@
   "name": "pam",
   "version": "0.1.0",
   "private": true,
-  "description": "PAM — Phillips & Millman AI assistant over Smokeball",
+  "description": "PAM \u2014 Phillips & Millman AI assistant over Smokeball",
   "type": "module",
   "engines": {
     "node": ">=22"
@@ -19,7 +19,8 @@
     "sync": "tsx src/server/sync/run.ts",
     "demo": "tsx src/server/demo/morning-brief.ts",
     "dev": "tsx src/server/main.ts",
-    "eval": "tsx src/evals/run.ts"
+    "eval": "tsx src/evals/run.ts",
+    "bench": "tsx src/evals/bench.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.57.0",

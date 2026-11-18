@@ -564,88 +564,218 @@ table.data td { padding: 10px 12px; border-bottom: 1px solid var(--line-soft); v
 /* ─────────────────────────────────────────────────────────── the orb room */
 .orb-room {
   position: fixed; inset: 0; z-index: 60;
-  /* One flat ground everywhere — the orb's own aura is the only light, so the
-     canvas boundary can never read as a different-colored panel. */
+  /* One flat ground everywhere — the orb's own light is the only light. */
   background: var(--frame);
   color: var(--frame-ink);
-  display: flex; flex-direction: column; align-items: center;
-  padding: 18px clamp(14px, 4vw, 40px) calc(18px + env(safe-area-inset-bottom));
+  display: flex; flex-direction: column;
+  padding: 0 clamp(14px, 3vw, 36px) calc(14px + env(safe-area-inset-bottom));
   font-family: var(--sans);
+  overflow: hidden;
+}
+.orb-top {
+  flex: none; display: grid; grid-template-columns: 1fr auto 1fr; align-items: center;
+  padding: 14px 0 6px;
 }
 .orb-back, .orb-mute, .orb-cmd {
-  font-family: var(--sans); font-size: 12.5px; letter-spacing: 0.06em;
+  font: 500 11px/1 var(--display); letter-spacing: 0.22em; text-transform: uppercase;
   color: var(--frame-ink-dim); background: none; border: 0; text-decoration: none;
-  cursor: pointer; padding: 6px 4px; text-transform: lowercase;
+  cursor: pointer; padding: 8px 4px;
 }
 .orb-back:hover, .orb-mute:hover, .orb-cmd:hover { color: var(--brass-bright); }
-.orb-back { position: absolute; top: 14px; left: 18px; }
-.orb-mute { position: absolute; top: 14px; right: 18px; }
-.orb-stage { flex: 1; min-height: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; width: 100%; }
-/* The canvas yields: it shrinks as the console grows, so the status line and
-   transcript never collide. The renderer centers itself in any aspect. */
+.orb-back:focus-visible, .orb-mute:focus-visible, .orb-cmd:focus-visible, .orb-starter:focus-visible, .hud-link:focus-visible {
+  outline: 1px solid var(--brass); outline-offset: 3px;
+}
+.orb-back { justify-self: start; }
+.orb-mute { justify-self: end; }
+.orb-mute[aria-pressed='true'] { color: var(--alert); }
+.orb-clock { text-align: center; line-height: 1.25; }
+.orb-clock b { display: block; font: 400 20px/1.1 var(--serif); letter-spacing: 0.04em; color: var(--frame-ink); font-variant-numeric: tabular-nums; }
+.orb-clock span { font: 400 10.5px/1 var(--display); letter-spacing: 0.26em; text-transform: uppercase; color: var(--frame-ink-dim); }
+
+.orb-main {
+  flex: 1; min-height: 0; display: grid; gap: clamp(12px, 2.2vw, 34px);
+  grid-template-columns: minmax(0, 250px) minmax(0, 1fr) minmax(0, 250px);
+  align-items: stretch;
+  transition: grid-template-columns 0.45s cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+.orb-room.has-panels .orb-main { grid-template-columns: minmax(0, 230px) minmax(0, 1fr) minmax(0, 360px); }
+.orb-center { min-width: 0; min-height: 0; display: flex; flex-direction: column; align-items: center; }
+.orb-stage { flex: 1 1 0; min-height: 120px; width: 100%; display: flex; align-items: center; justify-content: center; }
+/* The canvas yields: it shrinks as the captions grow. The renderer centers
+   itself in any aspect and fades to nothing before its own edge. */
 .orb-canvas {
-  width: min(72vmin, 520px); max-width: 100%;
-  flex: 1 1 auto; min-height: 150px;
-  cursor: pointer; touch-action: manipulation;
+  width: min(100%, 78vmin, 600px); height: 100%; max-height: 600px;
+  cursor: pointer; touch-action: manipulation; display: block;
 }
 .orb-status {
   flex: none;
-  font-family: var(--display); font-size: 12px; letter-spacing: 0.34em;
+  font: 400 11.5px/1.3 var(--display); letter-spacing: 0.26em;
   text-transform: uppercase; color: var(--frame-ink-dim);
-  display: flex; align-items: center; gap: 10px; margin: 6px 0 4px;
+  display: flex; align-items: center; gap: 10px; margin: 2px 0 10px; text-align: center;
+  max-width: 100%;
 }
-.orb-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--frame-ink-dim); }
-.orb-dot.s-listening { background: var(--brass-bright); box-shadow: 0 0 10px var(--brass-bright); }
+.orb-dot { flex: none; width: 7px; height: 7px; border-radius: 50%; background: var(--frame-ink-dim); transition: background 0.3s, box-shadow 0.3s; }
+.orb-dot.s-listening { background: var(--brass-bright); box-shadow: 0 0 12px var(--brass-bright); }
 .orb-dot.s-thinking { background: var(--brass); animation: orbpulse 0.9s infinite; }
-.orb-dot.s-speaking { background: #d9c08a; box-shadow: 0 0 12px #d9c08a; }
-@keyframes orbpulse { 50% { opacity: 0.35; } }
-.orb-console {
-  width: min(720px, 100%); max-height: 30vh; overflow-y: auto;
-  flex: none; margin-top: 8px;
-  font-size: 15px; line-height: 1.6; display: flex; flex-direction: column; gap: 6px;
-  mask-image: linear-gradient(to bottom, transparent, black 18%);
+.orb-dot.s-speaking { background: #e9d6a8; box-shadow: 0 0 14px #e9d6a8; }
+@keyframes orbpulse { 50% { opacity: 0.3; } }
+
+/* Captions: what she is saying, lit as she says it. */
+.orb-captions {
+  flex: none; width: min(760px, 100%); max-height: 34vh; overflow-y: auto;
+  display: flex; flex-direction: column; gap: 14px; text-align: center;
+  mask-image: linear-gradient(to bottom, transparent, black 26px);
+  padding-top: 10px; scrollbar-width: none;
 }
-.orb-line { color: var(--frame-ink); }
-.orb-line .who { color: var(--brass); font-weight: 700; margin-right: 6px; }
-.orb-line.you { color: var(--frame-ink-dim); }
-.orb-line.pam { font-family: var(--serif); font-size: 16.5px; }
-.orb-line.sys { color: var(--alert); }
-.caret { animation: orbpulse 1s infinite; color: var(--brass-bright); }
+.orb-captions::-webkit-scrollbar { display: none; }
+.orb-turn { opacity: 0.42; transition: opacity 0.4s; }
+.orb-turn.current { opacity: 1; }
+.orb-you {
+  margin: 0 0 6px; font: 400 12.5px/1.4 var(--sans); letter-spacing: 0.04em; color: var(--frame-ink-dim);
+}
+.orb-you::before { content: '“'; }
+.orb-you::after { content: '”'; }
+.orb-you.hearing { color: var(--brass-bright); font-size: 15px; }
+.orb-say { margin: 0; font: 400 clamp(17px, 1.55vw + 9px, 23px)/1.5 var(--serif); color: var(--frame-ink); text-wrap: pretty; white-space: pre-line; }
+.orb-say.long { font-size: clamp(16px, 1.1vw + 8px, 19.5px); }
+.orb-turn:not(.current) .orb-say { font-size: 15.5px; }
+.orb-say .unsaid { color: color-mix(in srgb, var(--frame-ink) 38%, transparent); transition: color 0.3s; }
+.orb-turn.error .orb-say { color: var(--alert); font: 400 15px/1.5 var(--sans); }
+
+.orb-starters { flex: none; display: flex; flex-wrap: wrap; gap: 10px; justify-content: center; padding: 14px 0 2px; }
+.orb-starter {
+  font: 400 14px/1.2 var(--sans); color: color-mix(in srgb, var(--frame-ink) 88%, transparent);
+  background: color-mix(in srgb, var(--frame-ink) 5%, transparent); border: 1px solid color-mix(in srgb, var(--brass) 40%, transparent);
+  padding: 10px 16px; border-radius: 999px; cursor: pointer;
+  transition: background 0.15s ease, border-color 0.15s ease;
+}
+.orb-starter:hover { background: color-mix(in srgb, var(--brass) 16%, transparent); border-color: color-mix(in srgb, var(--brass) 80%, transparent); }
+
+/* Ambient readout — the shape of the day, in hairlines and small caps. */
+.orb-ambient { min-width: 0; align-self: center; display: flex; flex-direction: column; gap: 18px; padding-bottom: 6vh; }
+.amb { border-left: 1px solid color-mix(in srgb, var(--brass) 38%, transparent); padding: 2px 0 2px 14px; display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.amb-k { font: 400 10px/1.2 var(--display); letter-spacing: 0.3em; text-transform: uppercase; color: var(--frame-ink-dim); }
+.amb-v { font: 400 27px/1.1 var(--serif); color: var(--frame-ink); font-variant-numeric: lining-nums tabular-nums; }
+.amb-s { font: 400 14px/1.35 var(--serif); color: color-mix(in srgb, var(--frame-ink) 86%, transparent); overflow: hidden; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; }
+.amb-t { font: 500 11px/1.3 var(--sans); letter-spacing: 0.06em; color: var(--frame-ink-dim); }
+.amb-t.court { color: var(--brass-bright); }
+.amb-row { flex-direction: row; gap: 20px; }
+.amb-row > div { display: flex; flex-direction: column; gap: 4px; }
+.amb-n { font: 400 25px/1 var(--serif); color: var(--frame-ink); font-variant-numeric: lining-nums tabular-nums; }
+.amb-n.hot { color: var(--alert); }
+.amb-sync { flex-direction: row; align-items: center; gap: 8px; border-left-color: transparent; font: 400 10.5px/1 var(--display); letter-spacing: 0.24em; text-transform: uppercase; color: var(--frame-ink-dim); flex-wrap: wrap; }
+.amb-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--ok); }
+.amb-dot.busy { background: var(--warn); animation: orbpulse 1.4s infinite; }
+.amb-dot.bad { background: var(--alert); }
+.amb-tag { border: 1px solid color-mix(in srgb, var(--brass) 40%, transparent); padding: 3px 6px; border-radius: 2px; letter-spacing: 0.18em; font-size: 9.5px; }
+
+/* Panels — what she found. Glass on the dark frame; they arrive, they don't pop. */
+.orb-panels { min-width: 0; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; gap: 12px; padding: 8px 0 4vh; scrollbar-width: none; }
+/* Centered when they fit, top-anchored (and scrollable) when they don't. */
+.orb-panels > :first-child { margin-top: auto; }
+.orb-panels > :last-child { margin-bottom: auto; }
+.orb-panels::-webkit-scrollbar { display: none; }
+.hud {
+  background: color-mix(in srgb, var(--frame-ink) 4.5%, transparent);
+  border: 1px solid color-mix(in srgb, var(--brass) 26%, transparent);
+  border-top-color: color-mix(in srgb, var(--brass) 60%, transparent);
+  border-radius: 3px; padding: 14px 16px 12px;
+  animation: hud-in 0.5s cubic-bezier(0.2, 0.8, 0.2, 1) both;
+  backdrop-filter: blur(6px);
+}
+@keyframes hud-in { from { opacity: 0; transform: translateX(14px); } to { opacity: 1; transform: none; } }
+.hud-h { display: flex; justify-content: space-between; align-items: flex-start; gap: 10px; margin-bottom: 8px; }
+.hud-h h3 { margin: 0; font: 400 13px/1.25 var(--display); letter-spacing: 0.2em; text-transform: uppercase; color: var(--brass-bright); }
+.hud-cap { display: block; margin-top: 4px; font: 400 11.5px/1.3 var(--sans); color: var(--frame-ink-dim); }
+.hud-x { background: none; border: 0; color: var(--frame-ink-dim); font-size: 18px; line-height: 1; cursor: pointer; padding: 0 2px; }
+.hud-x:hover { color: var(--frame-ink); }
+.hud-facts { margin: 0 0 6px; display: grid; grid-template-columns: auto 1fr; gap: 5px 14px; }
+.hud-facts > div { display: contents; }
+.hud-facts dt { font: 400 10px/1.7 var(--display); letter-spacing: 0.22em; text-transform: uppercase; color: var(--frame-ink-dim); white-space: nowrap; }
+.hud-facts dd { margin: 0; font: 400 14px/1.4 var(--sans); color: var(--frame-ink); overflow-wrap: anywhere; }
+.hud-facts a, .hud-call { color: var(--brass-bright); text-decoration: none; border-bottom: 1px solid color-mix(in srgb, var(--brass) 50%, transparent); }
+.hud-items { list-style: none; margin: 0; padding: 0; }
+.hud-items li { display: flex; gap: 12px; align-items: baseline; padding: 7px 0; border-top: 1px solid color-mix(in srgb, var(--frame-ink) 9%, transparent); }
+.hud-items li:first-child { border-top: 0; }
+.hud-lead { flex: none; width: 68px; font: 500 11.5px/1.4 var(--sans); letter-spacing: 0.03em; color: var(--brass); font-variant-numeric: tabular-nums; }
+.hud-body { min-width: 0; flex: 1; display: flex; flex-direction: column; gap: 2px; }
+.hud-body b, .hud-link { font: 500 14px/1.35 var(--sans); color: var(--frame-ink); text-align: left; }
+.hud-link { background: none; border: 0; padding: 0; cursor: pointer; }
+.hud-link:hover { color: var(--brass-bright); }
+.hud-sub { font: 400 12px/1.35 var(--sans); color: var(--frame-ink-dim); }
+.hud-items li.t-alert .hud-lead { color: var(--alert); text-transform: uppercase; letter-spacing: 0.12em; font-size: 10.5px; }
+.hud-items li.t-ok .hud-body b, .hud-items li.t-ok .hud-link { color: #cfe3c8; }
+.hud-call { flex: none; font: 500 11px/1 var(--display); letter-spacing: 0.18em; text-transform: uppercase; padding-bottom: 2px; }
+.hud-more { margin-top: 6px; font: 400 11.5px/1 var(--sans); color: var(--frame-ink-dim); }
+.hud-note { margin-top: 8px; padding-top: 8px; border-top: 1px solid color-mix(in srgb, var(--frame-ink) 9%, transparent); font: 400 12px/1.45 var(--sans); color: var(--frame-ink-dim); }
+.hud-confirm { border-color: color-mix(in srgb, var(--warn) 60%, transparent); }
+.hud-confirm .hud-h h3 { color: var(--warn); }
+
 .orb-input {
-  width: min(720px, 100%); display: flex; align-items: center; gap: 10px;
-  border-top: 1px solid color-mix(in srgb, var(--brass) 35%, transparent);
-  padding-top: 12px; margin-top: 10px;
+  flex: none; width: min(980px, 100%); margin: 10px auto 0; display: flex; align-items: center; gap: 14px;
+  border-top: 1px solid color-mix(in srgb, var(--brass) 30%, transparent);
+  padding-top: 10px;
 }
-.orb-input .who { color: var(--brass-bright); font-weight: 700; }
 .orb-input input {
-  flex: 1; background: none; border: 0; outline: none; color: var(--frame-ink);
-  font: 16.5px var(--sans);
+  flex: 1; min-width: 0; background: none; border: 0; outline: none; color: var(--frame-ink);
+  font: 16px var(--sans); padding: 8px 0;
 }
-.orb-input input::placeholder { color: var(--frame-ink-dim); }
+.orb-input input::placeholder { color: color-mix(in srgb, var(--frame-ink-dim) 80%, transparent); }
+.orb-cmds { flex: none; display: flex; gap: 6px 16px; flex-wrap: wrap; justify-content: flex-end; }
 .orb-diag {
-  position: absolute; bottom: 76px; right: 18px;
-  background: color-mix(in srgb, var(--frame) 88%, black); border: 1px solid var(--brass);
+  position: absolute; bottom: 70px; right: clamp(14px, 3vw, 36px); max-width: min(520px, calc(100% - 28px)); z-index: 3;
+  background: color-mix(in srgb, var(--frame) 92%, black); border: 1px solid color-mix(in srgb, var(--brass) 70%, transparent);
   padding: 12px 16px; font-size: 12.5px; line-height: 1.8; color: var(--frame-ink);
   font-family: var(--sans);
 }
+@media (prefers-reduced-motion: reduce) {
+  .hud { animation: none; }
+  .orb-main { transition: none; }
+}
 
-/* The orb room on a phone: bigger touch targets, a status line that fits,
-   command buttons on their own row, and the diagnostics as a bottom sheet. */
+/* Narrower screens: the day's readout becomes one quiet line above the orb,
+   and panels sit below the captions, in the flow. */
+@media (max-width: 1040px) {
+  .orb-main, .orb-room.has-panels .orb-main { display: flex; flex-direction: column; gap: 6px; overflow-y: auto; scrollbar-width: none; }
+  .orb-main::-webkit-scrollbar { display: none; }
+  .orb-ambient { order: 0; align-self: stretch; flex: none; flex-direction: row; flex-wrap: wrap; justify-content: center; gap: 6px 18px; padding: 0; }
+  .amb { border-left: 0; padding: 0; flex-direction: row; align-items: baseline; gap: 7px; }
+  .amb-v { font-size: 13px; letter-spacing: 0.06em; }
+  .amb-s { font: 400 12.5px/1.3 var(--sans); -webkit-line-clamp: 1; max-width: 44vw; }
+  .amb-t { display: none; }
+  .amb-row { gap: 14px; }
+  .amb-row > div { flex-direction: row; align-items: baseline; gap: 6px; }
+  .amb-n { font-size: 13px; }
+  .amb-sync { display: none; }
+  .orb-center { order: 1; flex: none; }
+  .orb-stage { flex: none; height: min(46vh, 430px); min-height: 190px; }
+  .orb-room.has-panels .orb-stage { height: min(30vh, 280px); }
+  .orb-captions { max-height: none; overflow: visible; mask-image: none; }
+  .orb-panels { order: 2; flex: none; overflow: visible; padding: 12px 0 8px; width: min(640px, 100%); align-self: center; }
+  .orb-panels > :first-child { margin-top: 0; }
+  .orb-panels > :last-child { margin-bottom: 0; }
+  @keyframes hud-in { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: none; } }
+}
+/* The orb room on a phone: bigger touch targets, commands on their own row,
+   and the diagnostics as a bottom sheet. */
 @media (max-width: 640px) {
-  .orb-room { padding: 10px 14px calc(12px + env(safe-area-inset-bottom)); }
-  .orb-back, .orb-mute { padding: 12px 8px; font-size: 13px; }
-  .orb-back { top: 6px; left: 8px; }
-  .orb-mute { top: 6px; right: 8px; }
-  .orb-canvas { width: 100%; min-height: 130px; }
-  .orb-status { font-size: 10.5px; letter-spacing: 0.16em; text-align: center; }
-  .orb-console { max-height: 24vh; font-size: 14.5px; }
-  .orb-line.pam { font-size: 16px; }
-  .orb-input { flex-wrap: wrap; gap: 4px 10px; row-gap: 2px; }
-  .orb-input input { flex: 1 1 220px; min-width: 0; padding: 8px 0; }
-  .orb-cmd { flex: 1 1 40%; text-align: center; padding: 10px 4px; }
+  .orb-room { padding: 0 14px calc(10px + env(safe-area-inset-bottom)); }
+  .orb-top { padding: 8px 0 2px; }
+  .orb-back, .orb-mute { padding: 12px 4px; }
+  .orb-clock b { font-size: 16px; }
+  .orb-clock span { font-size: 9px; letter-spacing: 0.18em; }
+  .orb-status { font-size: 10px; letter-spacing: 0.16em; }
+  .orb-say { font-size: 17.5px; }
+  .orb-input { flex-wrap: wrap; gap: 0 10px; }
+  .orb-input input { flex: 1 1 100%; padding: 10px 0 6px; }
+  .orb-cmds { flex: 1 1 100%; justify-content: space-between; }
+  .orb-cmd { padding: 10px 2px; font-size: 10px; letter-spacing: 0.14em; white-space: nowrap; }
+  /* On a phone the room shows the exchange in progress, not the history. */
+  .orb-turn:not(.current) { display: none; }
+  .hud-lead { width: 60px; }
   .orb-diag {
-    left: 10px; right: 10px;
-    bottom: calc(128px + env(safe-area-inset-bottom));
+    left: 10px; right: 10px; max-width: none;
+    bottom: calc(104px + env(safe-area-inset-bottom));
     font-size: 12px; line-height: 1.7;
   }
 }
@@ -668,15 +798,6 @@ table.data td { padding: 10px 12px; border-bottom: 1px solid var(--line-soft); v
 }
 @keyframes brief-breathe { 0%, 100% { transform: scale(0.88); opacity: 0.85; } 50% { transform: scale(1.08); opacity: 1; } }
 @media (prefers-reduced-motion: reduce) { .brief-orb { animation: none; } .brief-btn { transition: none; } }
-
-.orb-starters { display: flex; flex-wrap: wrap; gap: 10px; justify-content: center; padding: 6px 0 4px; }
-.orb-starter {
-  font: 400 14px/1.2 var(--sans); color: rgba(244, 236, 220, 0.86);
-  background: rgba(244, 236, 220, 0.05); border: 1px solid rgba(201, 162, 77, 0.38);
-  padding: 10px 16px; border-radius: 999px; cursor: pointer;
-  transition: background 0.15s ease, border-color 0.15s ease;
-}
-.orb-starter:hover, .orb-starter:focus-visible { background: rgba(201, 162, 77, 0.16); border-color: rgba(201, 162, 77, 0.8); outline: none; }
 
 .flag-scrim {
   position: fixed; inset: 0; z-index: 80; background: rgba(20, 8, 10, 0.55);

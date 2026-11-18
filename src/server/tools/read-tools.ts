@@ -14,6 +14,8 @@ import {
   todayRange,
 } from '../../core/dates.js';
 import type { Db } from '../db/index.js';
+import { mirror } from '../db/mirror.js';
+import { closestNames } from '../../core/fuzzy.js';
 import { schema } from '../db/index.js';
 import { cite, type Citation } from './citations.js';
 
@@ -39,7 +41,7 @@ const asOfNow = async (db: Db): Promise<string> => {
 };
 
 async function staffByRef(db: Db, ref: string): Promise<{ id: string; label: string } | undefined> {
-  const all = await db.select().from(schema.staff);
+  const all = await mirror.staff(db);
   const r = ref.trim().toLowerCase();
   const hit = all.find(
     (s) =>
@@ -105,15 +107,14 @@ const getCalendar: ToolDef = {
       staffLabel = hit.label;
     }
 
-    const all = await ctx.db.select().from(schema.events);
-    const matters = await ctx.db.select().from(schema.matters);
+    const all = await mirror.events(ctx.db);
+    const matters = await mirror.matters(ctx.db);
     const matterById = new Map(matters.map((m) => [m.id, m]));
 
+    const startMs = start.toMillis();
+    const endMs = end.toMillis();
     const inWindow = all
-      .filter((e) => {
-        const s = DateTime.fromISO(e.startTime, { zone: FIRM_TZ });
-        return s >= start && s <= end;
-      })
+      .filter((e) => e.startMs >= startMs && e.startMs <= endMs)
       // The real API has no office-calendar flag, so "office calendar" means:
       // flagged (mock/golden) OR anything that reads as a court appearance.
       .filter((e) =>
@@ -184,8 +185,8 @@ const getTasks: ToolDef = {
       };
     }
 
-    const all = await ctx.db.select().from(schema.tasks);
-    const matters = await ctx.db.select().from(schema.matters);
+    const all = await mirror.tasks(ctx.db);
+    const matters = await mirror.matters(ctx.db);
     const matterById = new Map(matters.map((m) => [m.id, m]));
 
     let open = all.filter((t) => !t.isCompleted && t.assigneeIds.includes(hit.id));
@@ -272,9 +273,8 @@ const searchMatters: ToolDef = {
   run: async (ctx, raw) => {
     const p = searchMattersSchema.parse(raw);
     const status = p.status ?? 'Open';
-    const all = await ctx.db.select().from(schema.matters);
-    const types = await ctx.db.select().from(schema.matterTypes);
-    const typeById = new Map(types.map((t) => [t.id, t]));
+    const all = await mirror.matters(ctx.db);
+    const typeById = await mirror.typesInUse(ctx.db);
 
     let hits = all;
     if (status !== 'any') hits = hits.filter((m) => m.status === status);
@@ -289,13 +289,31 @@ const searchMatters: ToolDef = {
     }
     if (p.practiceArea) {
       const q = p.practiceArea.toLowerCase();
-      hits = hits.filter((m) => typeById.get(m.matterTypeId)?.category.toLowerCase().includes(q));
+      hits = hits.filter((m) => `${typeById.get(m.matterTypeId)?.category ?? ''} ${typeById.get(m.matterTypeId)?.name ?? ''}`.toLowerCase().includes(q));
+    }
+
+    // Nothing by spelling? The name may have been HEARD (voice) rather than
+    // typed — offer the clients it most plausibly meant, flagged as such.
+    let heardAs: string | undefined;
+    if (hits.length === 0 && p.clientName && !p.practiceArea) {
+      const pool = status === 'any' ? all : all.filter((m) => m.status === status);
+      const close = closestNames(p.clientName, pool, (m) => [m.clientLastName, m.clientFirstName, `${m.clientFirstName}${m.clientLastName}`]);
+      if (close.length) {
+        hits = close.map((c) => c.item);
+        heardAs = p.clientName;
+      }
     }
 
     return {
       data: {
         count: hits.length,
         ambiguous: p.clientName !== undefined && hits.length > 1,
+        ...(heardAs
+          ? {
+              closeMatch: true,
+              note: `No client is spelled "${heardAs}". These are the closest names — if one is clearly what was meant, use it and say whose file you pulled; if two are plausible, ask which.`,
+            }
+          : {}),
         matters: hits.map((m) => ({
           id: m.id,
           label: matterLabel(m),
@@ -328,16 +346,15 @@ const getMatterOverview: ToolDef = {
     if (!m) {
       return { data: { error: `No matter with id ${p.matterId}` }, citations: [], asOf: await asOfNow(ctx.db) };
     }
-    const types = await ctx.db.select().from(schema.matterTypes);
-    const typeById = new Map(types.map((t) => [t.id, t]));
-    const staffRows = await ctx.db.select().from(schema.staff);
+    const typeById = await mirror.typesInUse(ctx.db);
+    const staffRows = await mirror.staff(ctx.db);
     const staffById = new Map(staffRows.map((s) => [s.id, `${s.firstName} ${s.lastName} (${s.initials})`]));
 
     const tasksRows = (await ctx.db.select().from(schema.tasks).where(eq(schema.tasks.matterId, p.matterId))).filter(
       (t) => !t.isCompleted,
     );
     const eventRows = (await ctx.db.select().from(schema.events).where(eq(schema.events.matterId, p.matterId))).filter(
-      (e) => DateTime.fromISO(e.startTime, { zone: FIRM_TZ }) >= now.startOf('day'),
+      (e) => Date.parse(e.startTime) >= now.startOf('day').toMillis(),
     );
     const memoRows = await ctx.db.select().from(schema.memos).where(eq(schema.memos.matterId, p.matterId));
     const folderRows = await ctx.db.select().from(schema.folders).where(eq(schema.folders.matterId, p.matterId));
@@ -410,26 +427,38 @@ const findStalledMatters: ToolDef = {
   run: async (ctx, raw) => {
     findStalledSchema.parse(raw);
     const now = appNow(ctx.fixedNowIso);
-    const matters = (await ctx.db.select().from(schema.matters)).filter((m) => m.status === 'Open');
-    const allTasks = await ctx.db.select().from(schema.tasks);
-    const allEvents = await ctx.db.select().from(schema.events);
+    const matters = (await mirror.matters(ctx.db)).filter((m) => m.status === 'Open');
+    const allTasks = await mirror.tasks(ctx.db);
+    const allEvents = await mirror.events(ctx.db);
 
-    const stalled = matters
-      .map((m) => {
-        const openTasks = allTasks.filter((t) => t.matterId === m.id && !t.isCompleted);
-        const futureEvents = allEvents.filter(
-          (e) => e.matterId === m.id && DateTime.fromISO(e.startTime, { zone: FIRM_TZ }) > now,
-        );
-        const lastTouched = [m.updatedAt, ...allTasks.filter((t) => t.matterId === m.id).map((t) => t.updatedAt), ...allEvents.filter((e) => e.matterId === m.id).map((e) => e.updatedAt)]
-          .sort()
-          .at(-1)!;
-        return { m, openTasks, futureEvents, lastTouched };
-      })
-      .filter((x) => x.openTasks.length === 0 && x.futureEvents.length === 0);
+    // One pass over tasks and events — never a scan per matter.
+    const nowMs = now.toMillis();
+    const hasOpenTask = new Set<string>();
+    const hasFutureEvent = new Set<string>();
+    const lastTouch = new Map<string, string>();
+    const touch = (id: string | null, at: string) => {
+      if (id && at > (lastTouch.get(id) ?? '')) lastTouch.set(id, at);
+    };
+    for (const t of allTasks) {
+      if (t.matterId && !t.isCompleted) hasOpenTask.add(t.matterId);
+      touch(t.matterId, t.updatedAt);
+    }
+    for (const e of allEvents) {
+      if (e.matterId && e.startMs > nowMs) hasFutureEvent.add(e.matterId);
+      touch(e.matterId, e.updatedAt);
+    }
+    const all = matters
+      .filter((m) => !hasOpenTask.has(m.id) && !hasFutureEvent.has(m.id))
+      .map((m) => ({ m, lastTouched: [m.updatedAt, lastTouch.get(m.id) ?? ''].sort().at(-1)! }))
+      .sort((a, b) => a.lastTouched.localeCompare(b.lastTouched)); // quietest longest first
+    const MAX = 40;
+    const stalled = all.slice(0, MAX);
 
     return {
       data: {
         note: 'Last-activity is derived from cached record update times (Smokeball has no activity feed).',
+        total: all.length,
+        ...(all.length > MAX ? { truncated: `Showing the ${MAX} that have been quiet longest, of ${all.length}. Say the total.` } : {}),
         matters: stalled.map((x) => ({
           id: x.m.id,
           label: matterLabel(x.m),
@@ -449,7 +478,7 @@ const listFirmStaff: ToolDef = {
   description: 'The firm roster: names, initials (JTM, FJP…), and roles, for resolving who "Frank" or "front desk" is.',
   paramsSchema: getStaffSchema,
   run: async (ctx) => {
-    const rows = await ctx.db.select().from(schema.staff);
+    const rows = await mirror.staff(ctx.db);
     return {
       data: rows.map((s) => ({ id: s.id, name: `${s.firstName} ${s.lastName}`, initials: s.initials, role: s.role })),
       citations: rows.map((s) => cite('staff', s.id, `${s.firstName} ${s.lastName} (${s.initials})`)),

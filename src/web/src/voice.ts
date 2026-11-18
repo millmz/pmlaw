@@ -67,6 +67,8 @@ export function routeThroughAnalyserIfRunning(
 
 let actx: AudioContext | null = null;
 let analyser: AnalyserNode | null = null;
+/** Live microphone level while recording a question (server transcription path). */
+let micAnalyser: AnalyserNode | null = null;
 let lastError: string | null = null;
 let currentAudio: HTMLAudioElement | null = null;
 let keepalive: ReturnType<typeof setInterval> | null = null;
@@ -136,12 +138,40 @@ export function primeAudio(): void {
 
 /** 0..1 output level for the orb; 0 when not speaking or analyser skipped. */
 export function getLevel(): number {
-  if (!analyser) return 0;
-  const data = new Uint8Array(analyser.fftSize);
-  analyser.getByteTimeDomainData(data);
+  const an = analyser ?? micAnalyser;
+  if (!an) return 0;
+  const data = new Uint8Array(an.fftSize);
+  an.getByteTimeDomainData(data);
   let sum = 0;
   for (const v of data) sum += Math.abs(v - 128);
   return Math.min(1, (sum / data.length / 40) * 1.6);
+}
+
+/** Tiny synthesized cues — the mic opening, a question received — so the
+ *  room answers a tap instantly, before any speech. Silent when muted. */
+export function chime(kind: 'listen' | 'heard' | 'stop'): void {
+  try {
+    if (!actx || actx.state !== 'running') return;
+    if (localStorage.getItem('pam-muted') === '1') return;
+    const now = actx.currentTime;
+    const notes = kind === 'listen' ? [660, 990] : kind === 'heard' ? [880] : [520, 390];
+    notes.forEach((freq, i) => {
+      const osc = actx!.createOscillator();
+      const gain = actx!.createGain();
+      osc.type = 'sine';
+      osc.frequency.value = freq;
+      const t = now + i * 0.075;
+      gain.gain.setValueAtTime(0.0001, t);
+      gain.gain.exponentialRampToValueAtTime(0.05, t + 0.012);
+      gain.gain.exponentialRampToValueAtTime(0.0001, t + 0.16);
+      osc.connect(gain);
+      gain.connect(actx!.destination);
+      osc.start(t);
+      osc.stop(t + 0.18);
+    });
+  } catch {
+    /* a cue is a nicety */
+  }
 }
 
 export function stopSpeaking(): void {
@@ -199,6 +229,46 @@ async function speakBrowser(text: string, onEnd: () => void): Promise<void> {
   }, 10_000);
 }
 
+/** Safari wants byte-range support before it will play a stream; it gets
+ *  the whole clip instead (still the fast voice model). */
+const canStreamAudio = (): boolean => {
+  const ua = navigator.userAgent;
+  const safari = /^((?!chrome|android|crios|fxios|edg).)*safari/i.test(ua);
+  return !safari;
+};
+
+/** Ask the server for a clip. Streaming browsers get an id to play AS IT IS
+ *  GENERATED; others get the finished audio. */
+async function clipSource(clean: string): Promise<{ url: string; revoke?: () => void } | null> {
+  if (canStreamAudio()) {
+    const res = await fetch('/api/tts', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ text: clean, stream: true }),
+    });
+    if (res.ok) {
+      const { id } = (await res.json()) as { id?: string };
+      if (id) return { url: `/api/tts/clip/${id}` };
+    } else {
+      const body = (await res.json().catch(() => ({}))) as { error?: string };
+      lastError = `tts: ${body.error ?? res.status}`;
+      return null;
+    }
+  }
+  const res = await fetch('/api/tts', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ text: clean }),
+  });
+  if (!res.ok) {
+    const body = (await res.json().catch(() => ({}))) as { error?: string };
+    lastError = `tts: ${body.error ?? res.status}`;
+    return null;
+  }
+  const url = URL.createObjectURL(await res.blob());
+  return { url, revoke: () => URL.revokeObjectURL(url) };
+}
+
 /** Speak a reply. Returns the path used. */
 export async function speak(text: string, onEnd: () => void): Promise<TtsPath> {
   const clean = sanitizeForSpeech(text);
@@ -208,21 +278,15 @@ export async function speak(text: string, onEnd: () => void): Promise<TtsPath> {
   }
   stopSpeaking();
   try {
-    const res = await fetch('/api/tts', {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ text: clean }),
-    });
-    if (res.ok) {
-      const blob = await res.blob();
-      const url = URL.createObjectURL(blob);
+    const src = await clipSource(clean);
+    if (src) {
       // Reuse the gesture-blessed element — a fresh Audio() here would be
       // rejected by iOS. If no gesture has primed one yet, fall back to a
       // fresh element (desktop allows it).
       const audio = sharedAudio ?? new Audio();
       sharedAudio = audio;
       audio.muted = false;
-      audio.src = url;
+      audio.src = src.url;
       currentAudio = audio;
       // Wire the analyser once per element; reuse the cached wiring after.
       if (!wireAttempted && actx && shouldRouteThroughAnalyser(actx.state)) {
@@ -230,9 +294,12 @@ export async function speak(text: string, onEnd: () => void): Promise<TtsPath> {
         wireAttempted = true;
       }
       analyser = wiredAnalyser;
+      let finished = false;
       const finish = () => {
+        if (finished) return;
+        finished = true;
         analyser = null;
-        URL.revokeObjectURL(url);
+        src.revoke?.();
         onEnd();
       };
       audio.onended = finish;
@@ -245,14 +312,12 @@ export async function speak(text: string, onEnd: () => void): Promise<TtsPath> {
         audio.onerror = null;
         analyser = null;
         currentAudio = null;
-        URL.revokeObjectURL(url);
+        src.revoke?.();
         await speakBrowser(clean, onEnd);
         return 'browser';
       }
       return 'elevenlabs';
     }
-    const body = (await res.json().catch(() => ({}))) as { error?: string };
-    lastError = `tts: ${body.error ?? res.status}`;
   } catch (e) {
     lastError = `tts fetch: ${String(e)}`;
   }
@@ -293,9 +358,32 @@ export interface ListenSession {
   stop: () => void;
 }
 
+export const recognitionSupported = (): boolean => Boolean(getRecognition());
+
+/** Rebuild the utterance from a recognition event. The event carries EVERY
+ *  result so far, so text must be rebuilt each time — appending re-added
+ *  earlier phrases ("what's on what's on my calendar"). Pure, for tests. */
+export function readResults(results: ArrayLike<RecogResultLike>): { final: string; interim: string } {
+  let final = '';
+  let interim = '';
+  for (let i = 0; i < results.length; i++) {
+    const r = results[i]!;
+    if (r.isFinal) final += r[0]!.transcript;
+    else interim += r[0]!.transcript;
+  }
+  return { final: final.trim(), interim: interim.trim() };
+}
+
+/** How long a pause means "I'm done". Shorter once the recognizer itself has
+ *  marked the phrase final; longer while it is still mid-word. */
+export const END_AFTER_FINAL_MS = 850;
+export const END_AFTER_INTERIM_MS = 1500;
+/** How long to wait for a first word before closing the mic. */
+const GIVE_UP_MS = 8000;
+
 /**
- * Continuous recognition with silence-based commit: ~1.7s of quiet after
- * speech commits the utterance; ~2.6s of nothing at all gives up quietly.
+ * Continuous recognition with pause-based commit: a short quiet after a
+ * finished phrase sends it; a long silence with no speech closes the mic.
  */
 export function startListening(handlers: {
   onPartial: (text: string) => void;
@@ -313,12 +401,12 @@ export function startListening(handlers: {
   rec.interimResults = true;
   rec.lang = 'en-US';
 
-  let transcript = '';
+  let heard = '';
   let commitTimer: ReturnType<typeof setTimeout> | null = null;
   let giveUpTimer: ReturnType<typeof setTimeout> | null = setTimeout(() => {
     cleanup();
     handlers.onGiveUp();
-  }, 2600);
+  }, GIVE_UP_MS);
   let done = false;
 
   const cleanup = () => {
@@ -338,33 +426,35 @@ export function startListening(handlers: {
       clearTimeout(giveUpTimer);
       giveUpTimer = null;
     }
-    let interim = '';
-    for (let i = 0; i < ev.results.length; i++) {
-      const r = ev.results[i]!;
-      if (r.isFinal) transcript += r[0]!.transcript;
-      else interim += r[0]!.transcript;
-    }
-    handlers.onPartial((transcript + interim).trim());
+    const { final, interim } = readResults(ev.results);
+    heard = `${final} ${interim}`.trim();
+    handlers.onPartial(heard);
     if (commitTimer) clearTimeout(commitTimer);
-    commitTimer = setTimeout(() => {
-      const text = transcript.trim() || interim.trim();
-      cleanup();
-      if (text) handlers.onCommit(text);
-      else handlers.onGiveUp();
-    }, 1700);
+    commitTimer = setTimeout(
+      () => {
+        const text = heard;
+        cleanup();
+        if (text) handlers.onCommit(text);
+        else handlers.onGiveUp();
+      },
+      interim ? END_AFTER_INTERIM_MS : END_AFTER_FINAL_MS,
+    );
   };
   rec.onerror = (ev: { error?: string }) => {
+    const had = heard;
     cleanup();
-    if (ev.error === 'no-speech') handlers.onGiveUp(); // silent, by design
+    if (had) handlers.onCommit(had); // keep what was said; don't lose a question to a late error
+    else if (ev.error === 'no-speech' || ev.error === 'aborted') handlers.onGiveUp(); // silent, by design
     else if (ev.error === 'not-allowed' || ev.error === 'service-not-allowed')
       handlers.onError('Microphone permission is blocked — allow the mic for this site in your browser settings.');
     else handlers.onError(`Speech recognition error: ${ev.error ?? 'unknown'}`);
   };
   rec.onend = () => {
-    if (!done && transcript.trim()) {
-      cleanup();
-      handlers.onCommit(transcript.trim());
-    }
+    if (done) return;
+    const text = heard;
+    cleanup();
+    if (text) handlers.onCommit(text);
+    else handlers.onGiveUp();
   };
   try {
     rec.start();
@@ -373,6 +463,122 @@ export function startListening(handlers: {
     return null;
   }
   return { stop: cleanup };
+}
+
+/**
+ * Listening without the browser's recognizer (Firefox, Chrome on iPhone, or
+ * when the built-in one fails): record the question, detect the end of
+ * speech from the microphone level, and have the server transcribe it.
+ */
+export function startServerListening(handlers: {
+  onPartial: (text: string) => void;
+  onCommit: (text: string) => void;
+  onGiveUp: () => void;
+  onError: (reason: string) => void;
+}): ListenSession | null {
+  if (!navigator.mediaDevices?.getUserMedia || typeof MediaRecorder === 'undefined') {
+    handlers.onError('This browser cannot record audio — type your question instead.');
+    return null;
+  }
+  let done = false;
+  let stream: MediaStream | null = null;
+  let recorder: MediaRecorder | null = null;
+  let poll: ReturnType<typeof setInterval> | null = null;
+  let source: MediaStreamAudioSourceNode | null = null;
+  const chunks: Blob[] = [];
+  let spoke = false;
+
+  const release = () => {
+    if (poll) clearInterval(poll);
+    poll = null;
+    try {
+      source?.disconnect();
+    } catch {
+      /* fine */
+    }
+    micAnalyser = null;
+    stream?.getTracks().forEach((t) => t.stop());
+    stream = null;
+  };
+  const finish = (send: boolean) => {
+    if (done) return;
+    done = true;
+    const rec = recorder;
+    if (!rec || rec.state === 'inactive') {
+      release();
+      if (!send) handlers.onGiveUp();
+      return;
+    }
+    rec.onstop = () => {
+      release();
+      if (!send || !spoke) return handlers.onGiveUp();
+      const blob = new Blob(chunks, { type: rec.mimeType || 'audio/webm' });
+      handlers.onPartial('…');
+      fetch('/api/stt', { method: 'POST', headers: { 'content-type': blob.type || 'audio/webm' }, body: blob })
+        .then(async (res) => {
+          const j = (await res.json().catch(() => ({}))) as { text?: string; error?: string };
+          if (!res.ok) return handlers.onError(`Could not transcribe that (${j.error ?? res.status}) — type it instead.`);
+          if (j.text?.trim()) handlers.onCommit(j.text.trim());
+          else handlers.onGiveUp();
+        })
+        .catch(() => handlers.onError('Could not reach the server to transcribe that — type it instead.'));
+    };
+    rec.stop();
+  };
+
+  navigator.mediaDevices
+    .getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true } })
+    .then((s) => {
+      if (done) return s.getTracks().forEach((t) => t.stop());
+      stream = s;
+      recorder = new MediaRecorder(s);
+      recorder.ondataavailable = (e) => {
+        if (e.data.size) chunks.push(e.data);
+      };
+      recorder.start(250);
+      const started = performance.now();
+      let lastLoud = 0;
+      if (actx) {
+        try {
+          source = actx.createMediaStreamSource(s);
+          const an = actx.createAnalyser();
+          an.fftSize = 1024;
+          source.connect(an);
+          micAnalyser = an;
+        } catch {
+          micAnalyser = null;
+        }
+      }
+      poll = setInterval(() => {
+        const now = performance.now();
+        const level = micAnalyser ? getLevel() : 0;
+        if (level > 0.09) {
+          spoke = true;
+          lastLoud = now;
+        }
+        if (!micAnalyser) {
+          // No level meter: fixed window, the user taps to send sooner.
+          spoke = true;
+          if (now - started > 9000) finish(true);
+          return;
+        }
+        if (spoke && now - lastLoud > 1100) finish(true);
+        else if (!spoke && now - started > GIVE_UP_MS) finish(false);
+        else if (now - started > 45_000) finish(true);
+      }, 80);
+    })
+    .catch((e: unknown) => {
+      done = true;
+      const name = (e as { name?: string })?.name;
+      handlers.onError(
+        name === 'NotAllowedError'
+          ? 'Microphone permission is blocked — allow the mic for this site in your browser settings.'
+          : `Could not open the microphone: ${String((e as Error)?.message ?? e)}`,
+      );
+    });
+
+  // Tapping the orb while recording sends what was said so far.
+  return { stop: () => finish(spoke) };
 }
 
 export async function getDiagnostics(ttsConfigured: boolean): Promise<VoiceDiagnostics> {

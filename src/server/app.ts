@@ -23,6 +23,9 @@ export interface AppDeps {
   ctx: ToolContext;
   worker: SyncWorker;
   llm?: LlmClient | undefined;
+  /** The model behind the orb room: chosen for speed to first word. Falls back to `llm`. */
+  voiceLlm?: LlmClient | undefined;
+  voiceModel?: string | undefined;
   /** When set, /api/* requires a session cookie obtained via /api/login. */
   accessCode?: string | undefined;
   /** False when the DB fell back to memory (persistent disk missing). */
@@ -45,6 +48,8 @@ const safeEqual = (a: string, b: string) => {
 export function buildApp(deps: AppDeps): FastifyInstance {
   const { ctx, worker, accessCode } = deps;
   const app = Fastify({ logger: false });
+  // Recorded questions for /api/stt arrive as raw audio.
+  app.addContentTypeParser(/^audio\/.+/, { parseAs: 'buffer' }, (_req, body, done) => done(null, body));
   void app.register(fastifyCookie);
 
   const authed = (req: FastifyRequest): boolean => {
@@ -80,6 +85,7 @@ export function buildApp(deps: AppDeps): FastifyInstance {
       mode: process.env['SMOKEBALL_BASE_URL'] ? 'real' : 'mock',
       writes: ctx.writesEnabled === false ? 'off (shadow)' : 'on',
       model: PAM_MODEL,
+      voiceModel: deps.voiceModel ?? PAM_MODEL,
       brain: brain.ok ? 'ok' : `DOWN — ${brain.detail}`,
       voice: voice.ok ? 'ok' : voice.detail,
       uptimeSec: Math.round(process.uptime()),
@@ -285,46 +291,166 @@ export function buildApp(deps: AppDeps): FastifyInstance {
 
   // ------------------------------------------------------------------ tts
   // ElevenLabs relay: the key stays server-side, restricted to synthesis.
-  // Clips are cached in memory by (voice, text) so a streamed sentence that
-  // was PREFETCHED while the previous one played is served instantly.
-  const ttsCache = new Map<string, { buf: Buffer; at: number }>();
-  const TTS_CACHE_MAX = 200;
-  const TTS_CACHE_TTL_MS = 10 * 60 * 1000;
-  app.post('/api/tts', async (req, reply) => {
+  // Clips are held in memory by (voice, text) so a sentence that was
+  // PREFETCHED while the previous one played is served instantly.
+  //
+  // A clip is requested by POST (the text never rides in a URL, where it
+  // would land in request logs) and played by GET /api/tts/clip/:id, which
+  // relays the audio AS IT IS GENERATED — the browser starts playing on the
+  // first bytes instead of after the whole sentence is synthesized.
+  interface Clip {
+    id: string;
+    key: string;
+    chunks: Buffer[];
+    done: boolean;
+    failed: string | null;
+    at: number;
+    waiters: Set<() => void>;
+  }
+  const clipsByKey = new Map<string, Clip>();
+  const clipsById = new Map<string, Clip>();
+  const TTS_CACHE_MAX = 240;
+  const TTS_CACHE_TTL_MS = 15 * 60 * 1000;
+  const wake = (c: Clip) => {
+    for (const w of c.waiters) w();
+    c.waiters.clear();
+  };
+  const evictClips = () => {
+    const now = Date.now();
+    for (const c of [...clipsById.values()].sort((x, y) => x.at - y.at)) {
+      if (clipsById.size <= TTS_CACHE_MAX && now - c.at < TTS_CACHE_TTL_MS) break;
+      clipsById.delete(c.id);
+      if (clipsByKey.get(c.key) === c) clipsByKey.delete(c.key);
+    }
+  };
+  /** Ask ElevenLabs for the clip: fastest model + streaming first; if that
+   *  combination is refused, the previous known-good request. */
+  const synthesize = async (c: Clip, apiKey: string, voiceId: string, text: string) => {
+    const attempt = (path: string, model: string) =>
+      fetch(`https://api.elevenlabs.io/v1/text-to-speech/${voiceId}${path}?output_format=mp3_44100_64`, {
+        method: 'POST',
+        headers: { 'xi-api-key': apiKey, 'content-type': 'application/json' },
+        body: JSON.stringify({ text, model_id: model }),
+      });
+    try {
+      const fast = process.env['PAM_TTS_MODEL']?.trim() || 'eleven_flash_v2_5';
+      let res = await attempt('/stream', fast);
+      if (!res.ok && res.status !== 401 && res.status !== 429) res = await attempt('', 'eleven_turbo_v2_5');
+      if (!res.ok || !res.body) {
+        c.failed = res.status === 401 ? 'bad_key' : res.status === 429 ? 'out_of_credits' : `elevenlabs_${res.status}`;
+        return;
+      }
+      const reader = res.body.getReader();
+      for (;;) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        if (value?.length) {
+          c.chunks.push(Buffer.from(value));
+          wake(c);
+        }
+      }
+    } catch (e) {
+      c.failed = `tts_${String(e instanceof Error ? e.message : e).slice(0, 60)}`;
+    } finally {
+      c.done = true;
+      if (c.failed || c.chunks.length === 0) {
+        c.failed ??= 'empty_audio';
+        if (clipsByKey.get(c.key) === c) clipsByKey.delete(c.key); // never cache a failure
+      }
+      wake(c);
+    }
+  };
+  const clipFor = async (text: string): Promise<Clip | { error: string; code: number }> => {
     const apiKey = (process.env['ELEVENLABS_API_KEY'] ?? '').trim();
-    if (!apiKey) return reply.code(501).send({ error: 'no_tts_key' });
-    const { text, prefetch } = (req.body ?? {}) as { text?: string; prefetch?: boolean };
-    if (!text?.trim()) return reply.code(400).send({ error: 'empty text' });
-    const { eq } = await import('drizzle-orm');
-    const voiceRow = await ctx.db
-      .select()
-      .from(schema.appSettings)
-      .where(eq(schema.appSettings.key, 'elevenlabs_voice_id'))
-      .limit(1);
+    if (!apiKey) return { error: 'no_tts_key', code: 501 };
+    const voiceRow = await ctx.db.select().from(schema.appSettings).where(eq(schema.appSettings.key, 'elevenlabs_voice_id')).limit(1);
     const voiceId = voiceRow[0]?.value || '21m00Tcm4TlvDq8ikWAM'; // "Rachel" default
-    const key = `${voiceId}\u0000${text.slice(0, 2500)}`;
-    const hit = ttsCache.get(key);
-    if (hit && Date.now() - hit.at < TTS_CACHE_TTL_MS) {
-      if (prefetch) return { cached: true };
-      return reply.type('audio/mpeg').header('x-pam-tts-cache', 'hit').send(hit.buf);
-    }
-    const res = await fetch(`https://api.elevenlabs.io/v1/text-to-speech/${voiceId}?output_format=mp3_44100_64`, {
-      method: 'POST',
-      headers: { 'xi-api-key': apiKey, 'content-type': 'application/json' },
-      body: JSON.stringify({ text: text.slice(0, 2500), model_id: 'eleven_turbo_v2_5' }),
+    const clean = text.slice(0, 2500);
+    const key = `${voiceId}\u0000${clean}`;
+    const hit = clipsByKey.get(key);
+    if (hit && !hit.failed && Date.now() - hit.at < TTS_CACHE_TTL_MS) return hit;
+    const c: Clip = { id: randomUUID(), key, chunks: [], done: false, failed: null, at: Date.now(), waiters: new Set() };
+    clipsByKey.set(key, c);
+    clipsById.set(c.id, c);
+    evictClips();
+    void synthesize(c, apiKey, voiceId, clean);
+    return c;
+  };
+  /** Wait for the clip to have its first audio (or fail). */
+  const firstAudio = (c: Clip, ms = 12_000) =>
+    new Promise<void>((resolve) => {
+      if (c.chunks.length || c.done) return resolve();
+      const t = setTimeout(resolve, ms);
+      c.waiters.add(() => {
+        clearTimeout(t);
+        resolve();
+      });
     });
-    if (!res.ok) {
-      const detail = res.status === 401 ? 'bad_key' : res.status === 429 ? 'out_of_credits' : `elevenlabs_${res.status}`;
-      return reply.code(502).send({ error: detail });
+
+  app.post('/api/tts', async (req, reply) => {
+    const { text, prefetch, stream } = (req.body ?? {}) as { text?: string; prefetch?: boolean; stream?: boolean };
+    if (!text?.trim()) return reply.code(400).send({ error: 'empty text' });
+    const c = await clipFor(text);
+    if ('error' in c) return reply.code(c.code).send({ error: c.error });
+    if (prefetch || stream) {
+      // Report a dead key/credit problem now rather than as a silent clip.
+      await firstAudio(c, stream ? 2500 : 50);
+      if (c.failed) return reply.code(502).send({ error: c.failed });
+      return { id: c.id, cached: c.done };
     }
-    const buf = Buffer.from(await res.arrayBuffer());
-    if (ttsCache.size >= TTS_CACHE_MAX) {
-      const oldest = [...ttsCache.entries()].sort((a, b) => a[1].at - b[1].at)[0];
-      if (oldest) ttsCache.delete(oldest[0]);
+    // Whole-clip response (older clients, Safari): wait for it all.
+    while (!c.done) await new Promise<void>((r) => c.waiters.add(r));
+    if (c.failed) return reply.code(502).send({ error: c.failed });
+    return reply.type('audio/mpeg').send(Buffer.concat(c.chunks));
+  });
+
+  app.get<{ Params: { id: string } }>('/api/tts/clip/:id', async (req, reply) => {
+    const c = clipsById.get(req.params.id);
+    if (!c) return reply.code(404).send({ error: 'no such clip' });
+    await firstAudio(c);
+    if (c.failed || c.chunks.length === 0) return reply.code(502).send({ error: c.failed ?? 'no_audio' });
+    if (c.done) return reply.type('audio/mpeg').header('cache-control', 'no-store').send(Buffer.concat(c.chunks));
+    reply.raw.writeHead(200, { 'content-type': 'audio/mpeg', 'cache-control': 'no-store', 'x-accel-buffering': 'no' });
+    let i = 0;
+    for (;;) {
+      while (i < c.chunks.length) reply.raw.write(c.chunks[i++]);
+      if (c.done) break;
+      await new Promise<void>((r) => c.waiters.add(r));
     }
-    ttsCache.set(key, { buf, at: Date.now() });
-    if (prefetch) return { cached: true };
-    return reply.type('audio/mpeg').header('x-pam-tts-cache', 'miss').send(buf);
+    reply.raw.end();
+    return reply;
+  });
+
+  /** Speech-to-text for browsers with no built-in recognition (Firefox,
+   *  Chrome on iPhone): the recorded question is transcribed by ElevenLabs
+   *  and discarded — never stored. */
+  app.post('/api/stt', { bodyLimit: 12 * 1024 * 1024 }, async (req, reply) => {
+    const apiKey = (process.env['ELEVENLABS_API_KEY'] ?? '').trim();
+    if (!apiKey) return reply.code(501).send({ error: 'no_stt_key' });
+    const audio = req.body as Buffer;
+    if (!Buffer.isBuffer(audio) || audio.length < 800) return reply.code(400).send({ error: 'no audio' });
+    const type = String(req.headers['content-type'] ?? 'audio/webm').split(';')[0]!;
+    const ext = type.includes('mp4') ? 'mp4' : type.includes('ogg') ? 'ogg' : type.includes('wav') ? 'wav' : 'webm';
+    const attempt = async (model: string) => {
+      const form = new FormData();
+      form.append('model_id', model);
+      form.append('language_code', 'en');
+      form.append('tag_audio_events', 'false');
+      form.append('file', new Blob([new Uint8Array(audio)], { type }), `question.${ext}`);
+      return fetch('https://api.elevenlabs.io/v1/speech-to-text', { method: 'POST', headers: { 'xi-api-key': apiKey }, body: form });
+    };
+    try {
+      let res = await attempt(process.env['PAM_STT_MODEL']?.trim() || 'scribe_v2');
+      if (!res.ok && res.status >= 400 && res.status < 500 && res.status !== 401 && res.status !== 429) res = await attempt('scribe_v1');
+      if (!res.ok) {
+        const detail = res.status === 401 ? 'bad_key' : res.status === 429 ? 'out_of_credits' : res.status === 403 ? 'key_lacks_speech_to_text_permission' : `elevenlabs_${res.status}`;
+        return reply.code(502).send({ error: detail });
+      }
+      const j = (await res.json()) as { text?: string };
+      return { text: (j.text ?? '').trim() };
+    } catch (e) {
+      return reply.code(502).send({ error: `stt_${String(e instanceof Error ? e.message : e).slice(0, 80)}` });
+    }
   });
 
   app.get('/api/settlements', async () => {
@@ -615,20 +741,54 @@ export function buildApp(deps: AppDeps): FastifyInstance {
     };
   });
 
+  let lastTurnTiming: unknown = null;
+  let lastPrewarm = 0;
+  /** Warm the model's prompt cache when the orb room (or chat) opens, so the
+   *  first question after a quiet spell is as fast as the tenth. At most
+   *  once every 20 minutes; the cache itself lasts an hour. */
+  app.post('/api/chat/prewarm', async () => {
+    const target = deps.voiceLlm ?? deps.llm;
+    if (!target?.prewarm) return { ok: false, reason: 'unavailable' };
+    if (Date.now() - lastPrewarm < 20 * 60_000) return { ok: true, warm: 'already' };
+    lastPrewarm = Date.now();
+    const { toolDefinitions } = await import('./agent/loop.js');
+    const { buildStableBlock } = await import('./agent/system-prompt.js');
+    const { getIdentity, getKnowledge } = await import('./identity.js');
+    const system = [{ text: buildStableBlock(await getIdentity(ctx.db), await getKnowledge(ctx.db)), cache: true }];
+    const t0 = Date.now();
+    const ok = await target.prewarm({ system, tools: toolDefinitions() });
+    // The typed-chat model shares the room; warm it too, without waiting.
+    if (deps.llm && deps.llm !== target) void deps.llm.prewarm?.({ system, tools: toolDefinitions() });
+    if (!ok) lastPrewarm = 0;
+    return { ok, ms: Date.now() - t0 };
+  });
+  app.get('/api/chat/timing', async () => ({ last: lastTurnTiming }));
+
+  /** What PAM says when Jeff walks into the orb room — computed, instant,
+   *  no model call: the hour's greeting and the shape of the day. */
+  app.get('/api/greeting', async () => {
+    const { buildGreeting } = await import('./greeting.js');
+    return buildGreeting(ctx);
+  });
+
   app.post('/api/chat/stream', async (req, reply) => {
     if (!deps.llm) {
       return reply.code(501).send({
         error: 'Chat isn’t configured yet — the server needs an ANTHROPIC_API_KEY.',
       });
     }
-    const { message } = (req.body ?? {}) as { message?: string };
+    const { message, voice } = (req.body ?? {}) as { message?: string; voice?: boolean };
     if (!message?.trim()) return reply.code(400).send({ error: 'Empty message.' });
 
     reply.raw.writeHead(200, {
       'content-type': 'text/event-stream',
-      'cache-control': 'no-cache',
+      'cache-control': 'no-cache, no-transform',
       connection: 'keep-alive',
+      // Tell any proxy in front of us not to hold the stream back — a
+      // buffered stream turns "first word in a second" into "all at once".
+      'x-accel-buffering': 'no',
     });
+    reply.raw.flushHeaders?.();
     const send = (payload: unknown) => reply.raw.write(`data: ${JSON.stringify(payload)}\n\n`);
 
     try {
@@ -642,10 +802,48 @@ export function buildApp(deps: AppDeps): FastifyInstance {
       // Bounded context window: full history stays in the DB; the model sees
       // the most recent slice (block-2 snapshot carries current state anyway).
       const window = session.history.slice(-60); // ~30 turns; drift checkpoint still fires at 28 msgs
-      const turn = await runAgentTurn(ctx, deps.llm, window, message, {
-        onText: (delta) => send({ type: 'text_delta', text: delta }),
-        onTool: (name) => send({ type: 'tool', name }),
-      });
+      const { panelFor } = await import('./panels.js');
+      // A briefing is answered from the snapshot (no lookup, so no panel of
+      // its own) — put the day on the screen while she talks through it.
+      if (voice === true && /\bbrief(ing)?\b|\bmy day\b|\bwhat(['’]?s| is) on (for )?today\b/i.test(message)) {
+        for (const [name, params] of [
+          ['get_calendar_events', { scope: 'today' }],
+          ['get_tasks', { status: 'all_open' }],
+        ] as const) {
+          try {
+            const panel = panelFor(name, params, (await runTool(ctx, name, params)).data);
+            if (panel) send({ type: 'panel', panel });
+          } catch {
+            /* the briefing itself does not depend on this */
+          }
+        }
+      }
+      const turn = await runAgentTurn(
+        ctx,
+        voice === true && deps.voiceLlm ? deps.voiceLlm : deps.llm,
+        window,
+        message,
+        {
+          onText: (delta) => send({ type: 'text_delta', text: delta }),
+          onNote: (delta) => send({ type: 'note_delta', text: delta }),
+          onTool: (name) => send({ type: 'tool', name }),
+          onToolResult: (name, params, data) => {
+            try {
+              const panel = panelFor(name, params, data);
+              if (panel) send({ type: 'panel', panel });
+            } catch {
+              /* a panel is a nicety — never fail the turn for one */
+            }
+          },
+        },
+        { voice: voice === true },
+      );
+      const tm = turn.timing;
+      console.log(
+        `[pam] turn${voice ? ' (voice)' : ''}: total ${tm.totalMs}ms · prep ${tm.prepMs}ms · ` +
+          tm.steps.map((st, i) => `step${i + 1} first ${st.ttftMs}ms/${st.ms}ms${st.cacheRead ? ' cached' : ''}${st.tools.length ? ` → ${st.tools.map((t) => `${t.name} ${t.ms}ms`).join(', ')}` : ''}`).join(' · '),
+      );
+      lastTurnTiming = tm;
 
       const newLlmMessages = turn.messages.slice(window.length);
       await ctx.db.insert(schema.chatMessages).values([
@@ -669,6 +867,7 @@ export function buildApp(deps: AppDeps): FastifyInstance {
         text: turn.text,
         citations: turn.citations,
         citationsValid: turn.citationsValid,
+        timing: turn.timing,
       });
     } catch (err) {
       send({ type: 'error', message: err instanceof Error ? err.message : 'Something went wrong.' });

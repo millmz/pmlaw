@@ -11,6 +11,7 @@ import {
 import { api } from './api.js';
 import { ChatPanel } from './chat.js';
 import { FlagButton } from './flag.js';
+import { primeAudio } from './voice.js';
 import { TodayPage } from './pages/Today.js';
 import { TasksPage } from './pages/Tasks.js';
 import { MatterDetailPage, MattersPage } from './pages/Matters.js';
@@ -221,7 +222,7 @@ function Shell() {
       <aside className="rail">
         <div className="rail-logo">
           {/* The monogram is the door to the orb room. */}
-          <NavLink to="/pam" className="bracket" style={{ textDecoration: 'none' }} aria-label="PAM" title="Talk to PAM">
+          <NavLink to="/pam" className="bracket" style={{ textDecoration: 'none' }} aria-label="PAM" title="Talk to PAM" onClick={primeAudio}>
             P<b>A</b>M
           </NavLink>
         </div>
@@ -296,7 +297,7 @@ function Shell() {
 
       <nav className="tabbar">
         {NAV.map((n) => (
-          <NavLink key={n.to} to={n.to} end={n.to === '/'} className={({ isActive }) => (isActive ? 'active' : '')}>
+          <NavLink key={n.to} to={n.to} end={n.to === '/'} className={({ isActive }) => (isActive ? 'active' : '')} onClick={n.to === '/pam' ? primeAudio : undefined}>
             <span className="icon">{n.icon}</span>
             {n.label}
           </NavLink>

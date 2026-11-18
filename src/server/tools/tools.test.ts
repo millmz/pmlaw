@@ -137,3 +137,15 @@ describe('read tools', () => {
     expect(missing).toHaveLength(1);
   });
 });
+
+describe('voice: a misheard client name still finds the file', () => {
+  it('offers the closest client when nothing is spelled that way, and says so', async () => {
+    const r = await runTool(ctx, 'search_matters', { clientName: 'grass oh' });
+    const d = r.data as { count: number; closeMatch?: boolean; note?: string; matters: { label: string }[] };
+    expect(d.closeMatch).toBe(true);
+    expect(d.matters[0]!.label).toContain('Grasso');
+    expect(d.note).toMatch(/closest names/);
+    const none = await runTool(ctx, 'search_matters', { clientName: 'Zzyzx' });
+    expect((none.data as { count: number }).count).toBe(0);
+  });
+});

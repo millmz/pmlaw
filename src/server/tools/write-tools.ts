@@ -4,6 +4,7 @@ import { DateTime } from 'luxon';
 import { z } from 'zod';
 import { FIRM_TZ, isStatuteReminder } from '../../core/dates.js';
 import { schema } from '../db/index.js';
+import { bumpMirror, mirror } from '../db/mirror.js';
 import { cite } from './citations.js';
 import { WRITES_OFF_RESULT, writesOff, type ToolDef } from './types.js';
 
@@ -37,13 +38,13 @@ const proposeTaskReschedule: ToolDef = {
       return { data: { error: `"${p.newDueDate}" is not a valid date — use YYYY-MM-DD.` }, citations: [], asOf };
     }
 
-    const all = (await ctx.db.select().from(schema.tasks)).filter((t) => !t.isCompleted);
+    const all = (await mirror.tasks(ctx.db)).filter((t) => !t.isCompleted);
     const q = p.taskQuery.toLowerCase();
     let hits = all.filter((t) => t.id === p.taskQuery);
     if (hits.length === 0) hits = all.filter((t) => t.subject.toLowerCase().includes(q));
     if (hits.length === 0) {
       // Fall back to client-name matching via the task's matter.
-      const matters = await ctx.db.select().from(schema.matters);
+      const matters = await mirror.matters(ctx.db);
       const matterIds = matters
         .filter((m) => `${m.clientFirstName} ${m.clientLastName}`.toLowerCase().includes(q))
         .map((m) => m.id);
@@ -173,6 +174,7 @@ const executeTaskReschedule: ToolDef = {
         .update(schema.tasks)
         .set({ dueDate: pending.newDueDate, updatedAt: new Date().toISOString() })
         .where(eq(schema.tasks.id, pending.taskId));
+      bumpMirror();
     }
 
     await ctx.db.insert(schema.auditLog).values({

@@ -1,4 +1,5 @@
 import { eq, getTableColumns, inArray, sql } from 'drizzle-orm';
+import { bumpMirror } from '../db/mirror.js';
 import { DateTime } from 'luxon';
 import type { SmokeballClient } from '../../smokeball/client.js';
 import { adaptEvent, adaptMatter, adaptMemo, adaptTask } from '../../smokeball/adapt.js';
@@ -41,6 +42,7 @@ export async function clearSyncedData(db: Db): Promise<void> {
   await db.delete(schema.staff);
   await db.delete(schema.syncState);
   await db.delete(schema.derived);
+  bumpMirror();
 }
 
 /**
@@ -223,6 +225,7 @@ export class SyncWorker {
     // A batch may not touch the same id twice (Postgres rejects it) — last wins.
     rows = [...new Map(rows.map((r) => [r['id'], r])).values()];
     this.dirty = true;
+    bumpMirror();
     const set: Record<string, unknown> = {};
     for (const [key, col] of Object.entries(getTableColumns(table))) {
       if (key === 'id') continue;
@@ -474,6 +477,7 @@ export class SyncWorker {
           .update(schema.matters)
           .set({ clientFirstName: name.firstName, clientLastName: name.lastName })
           .where(eq(schema.matters.id, n.id));
+        bumpMirror();
       } else if (++misses >= 5 && named === 0) {
         break;
       }
@@ -570,7 +574,10 @@ export class SyncWorker {
     const id = typeof p['id'] === 'string' ? p['id'] : undefined;
     if (/\.deleted$/.test(type) && id) {
       const table = type.startsWith('task.') ? schema.tasks : type.startsWith('memo.') ? schema.memos : type.startsWith('matter.') ? schema.matters : type.startsWith('event.') ? schema.events : null;
-      if (table) await this.db.delete(table).where(eq(table.id, id));
+      if (table) {
+        await this.db.delete(table).where(eq(table.id, id));
+        bumpMirror();
+      }
       return;
     }
     const nested = p['matter'] && typeof p['matter'] === 'object' ? (p['matter'] as Record<string, unknown>)['id'] : undefined;

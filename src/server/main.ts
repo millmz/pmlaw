@@ -155,8 +155,16 @@ async function main() {
   };
 
   let llm: LlmClient | undefined;
+  let voiceLlm: LlmClient | undefined;
+  // The orb room answers aloud: there, time-to-first-word is the product.
+  // Measured on PAM's own questions, the current Haiku starts its real
+  // answer in about a second and finishes in under three, and passes the
+  // same safety evals — so it voices the room; typed chat keeps the Sonnet.
+  const voiceModel = process.env['PAM_VOICE_MODEL']?.trim() || 'claude-haiku-5-5';
   if (pamApiKey()) {
     llm = await anthropicLlm();
+    voiceLlm = await anthropicLlm(voiceModel);
+    console.log(`[pam] voice model: ${voiceModel}`);
     const { PAM_MODEL } = await import('./agent/loop.js');
     const { checkBrain } = await import('./health.js');
     // Boot-time ping so a dead key is in the log, not in Jeff's first question.
@@ -196,7 +204,7 @@ async function main() {
   // Bind the port BEFORE the first sync: a sync failure against the real API
   // must leave the server up (and /api/smokeball/verify reachable) rather
   // than crash-looping the deploy with no open port.
-  const app = buildApp({ ctx, worker, llm, accessCode: process.env['PAM_ACCESS_CODE'], dataPersistent: persistent, webhookKey });
+  const app = buildApp({ ctx, worker, llm, voiceLlm, voiceModel, accessCode: process.env['PAM_ACCESS_CODE'], dataPersistent: persistent, webhookKey });
   phase('app built, binding port');
   const addr = await app.listen({ port: PORT, host: '0.0.0.0' });
   console.log(`[pam] serving at ${addr} (chat ${llm ? 'enabled' : 'DISABLED — no ANTHROPIC_API_KEY'})`);
@@ -212,6 +220,8 @@ async function main() {
     // Keep the settlement board warm in the background, so opening the
     // Settle page is instant instead of a first-read wait. Only when a
     // sync actually changed something; single-flight inside.
+    // Keep the snapshot warm too — it rides every question.
+    void import('./agent/snapshot.js').then(({ buildSnapshot }) => buildSnapshot(ctx)).catch(() => undefined);
     if (useReal && worker.takeDirty()) {
       void import('./settlement/engine.js')
         .then(({ getSettlementBoard }) => getSettlementBoard(db, client, ctx.fixedNowIso))

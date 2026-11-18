@@ -112,7 +112,7 @@ test('mobile: the orb room fits the phone — no sideways scroll, controls reach
   expect(overflow).toBeLessThanOrEqual(0);
   // Command row and input are reachable, and diagnostics reports the
   // gesture-unlock state we rely on for iOS playback.
-  await page.getByRole('button', { name: '[ system check ]' }).click();
+  await page.getByRole('button', { name: /system check/i }).click();
   await expect(page.locator('.orb-diag')).toContainText('playback unlocked');
   await page.screenshot({ path: 'e2e/screenshots/15-mobile-orb.png' });
 });
@@ -136,14 +136,14 @@ test('the orb room: full-page takeover, reactor canvas, honest diagnostics', asy
   await expect(page.locator('.orb-canvas')).toBeVisible();
   await expect(page.locator('.rail')).toHaveCount(0); // takeover: no app chrome
   // With no API key, the status line says so instead of pretending.
-  await expect(page.locator('.orb-status')).toContainText('API KEY');
+  await expect(page.locator('.orb-status')).toContainText(/api key/i);
   // Voice unavailability surfaces real reasons, not silence:
-  await page.getByRole('button', { name: '[ system check ]' }).click();
+  await page.getByRole('button', { name: /system check/i }).click();
   await expect(page.locator('.orb-diag')).toContainText('voice path: browser'); // no ElevenLabs key in E2E
   await expect(page.locator('.orb-diag')).toContainText('recognition:');
   await expect(page.locator('.orb-diag')).toContainText('microphone:');
   await page.screenshot({ path: 'e2e/screenshots/13-orb.png' });
-  await page.getByText('[ ← back ]').click();
+  await page.getByRole('link', { name: 'Back to Today' }).click();
   await expect(page.getByRole('heading', { name: 'Today', exact: true })).toBeVisible();
 });
 
@@ -268,4 +268,32 @@ test('Settle: a demand with no offer yet is on the board, and free-form readings
   await page.goto('/settlements');
   await expect(page.locator('.board-warming')).toHaveCount(0);
   await page.screenshot({ path: 'e2e/screenshots/11-settle.png', fullPage: true });
+});
+
+test('orb room greets with the shape of the day and keeps it in view', async ({ page }) => {
+  await login(page);
+  await page.request.post('/api/chat/new');
+  await page.goto('/pam');
+  // Computed, not generated: exact, and there the moment the room opens.
+  await expect(page.locator('.orb-say')).toContainText('Good morning, Jeff. You have court at Town of Clarkstown Justice Court, on Vasquez, at nine.');
+  await expect(page.locator('.orb-say')).toContainText(/(Eleven|Twelve) tasks due today and two overdue\./); // an earlier test may have seeded one
+  const ambient = page.locator('.orb-ambient');
+  await expect(ambient).toContainText('9:00 AM');
+  await expect(ambient).toContainText('Court');
+  await expect(ambient.locator('.amb-n').first()).toHaveText(/^1[12]$/);
+  await expect(ambient).toContainText(/Synced/i);
+  // The orb is the shader sphere when the browser can draw it, the 2D one otherwise — either way it is there and tappable.
+  await expect(page.getByRole('button', { name: /PAM orb/ })).toBeVisible();
+  await page.screenshot({ path: 'e2e/screenshots/16-orb-greeting.png' });
+});
+
+test('orb room on a narrow screen: readout above the orb, nothing wider than the phone', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await login(page);
+  await page.goto('/pam');
+  await expect(page.locator('.orb-ambient')).toContainText('9:00 AM');
+  const overflow = await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
+  expect(overflow).toBeLessThanOrEqual(0);
+  const input = await page.getByLabel('Ask PAM').boundingBox();
+  expect(input!.y + input!.height).toBeLessThanOrEqual(844); // the input is on screen without scrolling
 });

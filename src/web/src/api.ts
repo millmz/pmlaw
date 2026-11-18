@@ -126,10 +126,36 @@ export const api = {
   sync: () => fetch('/api/sync', { method: 'POST' }),
 };
 
+/** One card of the orb room's heads-up display (mirrors server/panels.ts). */
+export interface PanelItem {
+  lead?: string;
+  title: string;
+  sub?: string;
+  tone?: 'alert' | 'warn' | 'ok' | 'info';
+  matterId?: string;
+  tel?: string;
+}
+export interface Panel {
+  kind: 'schedule' | 'tasks' | 'matter' | 'matters' | 'settlements' | 'timeline' | 'confirm' | 'list';
+  title: string;
+  caption?: string;
+  facts?: { k: string; v: string; tel?: string }[];
+  items?: PanelItem[];
+  more?: number;
+  note?: string;
+}
+export interface TurnTiming {
+  prepMs: number;
+  totalMs: number;
+  steps: { ttftMs: number; ms: number; tools: { name: string; ms: number }[]; cacheRead: number }[];
+}
+
 export type ChatStreamEvent =
   | { type: 'text_delta'; text: string }
+  | { type: 'note_delta'; text: string }
   | { type: 'tool'; name: string }
-  | { type: 'done'; sessionId: string; text: string; citations: Citation[]; citationsValid: boolean }
+  | { type: 'panel'; panel: Panel }
+  | { type: 'done'; sessionId: string; text: string; citations: Citation[]; citationsValid: boolean; timing?: TurnTiming }
   | { type: 'error'; message: string };
 
 /** POST + parse the SSE stream from /api/chat/stream. */
@@ -137,12 +163,19 @@ export async function streamChat(
   message: string,
   sessionId: string | null,
   onEvent: (e: ChatStreamEvent) => void,
+  opts: { voice?: boolean } = {},
 ): Promise<void> {
-  const res = await fetch('/api/chat/stream', {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ message, sessionId }),
-  });
+  let res: Response;
+  try {
+    res = await fetch('/api/chat/stream', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ message, sessionId, ...(opts.voice ? { voice: true } : {}) }),
+    });
+  } catch {
+    onEvent({ type: 'error', message: 'PAM’s server is not answering — check your connection and try again.' });
+    return;
+  }
   if (!res.ok || !res.body) {
     const body = (await res.json().catch(() => ({}))) as { error?: string };
     onEvent({ type: 'error', message: body.error ?? `Chat failed (${res.status}).` });

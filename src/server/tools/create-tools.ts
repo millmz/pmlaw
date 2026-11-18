@@ -3,6 +3,7 @@ import { DateTime } from 'luxon';
 import { z } from 'zod';
 import { appNow, FIRM_TZ } from '../../core/dates.js';
 import { schema } from '../db/index.js';
+import { bumpMirror, mirror } from '../db/mirror.js';
 import { cite } from './citations.js';
 import { WRITES_OFF_RESULT, writesOff, type ToolContext, type ToolDef, type ToolResult } from './types.js';
 
@@ -24,7 +25,7 @@ async function resolveMatter(
 ): Promise<{ matter?: { id: string; label: string }; ambiguous?: ToolResult; notFound?: ToolResult }> {
   if (!query) return {};
   const asOf = new Date().toISOString();
-  const all = (await ctx.db.select().from(schema.matters)).filter((m) => m.status === 'Open');
+  const all = (await mirror.matters(ctx.db)).filter((m) => m.status === 'Open');
   const q = query.toLowerCase();
   let hits = all.filter((m) => m.id === query || m.number === query);
   if (hits.length === 0) {
@@ -185,6 +186,7 @@ const executeTaskCreate: ToolDef = {
             updatedAt: t.updatedAt,
           })
           .onConflictDoNothing();
+        bumpMirror();
       }
     }
 
@@ -234,7 +236,7 @@ const proposeEventCreate: ToolDef = {
     if (r.notFound) return r.notFound;
 
     // Conflict check against the user's cached calendar.
-    const mine = (await ctx.db.select().from(schema.events)).filter((e) => e.attendeeIds.includes(ctx.currentStaffId));
+    const mine = (await mirror.events(ctx.db)).filter((e) => e.attendeeIds.includes(ctx.currentStaffId));
     const conflicts = mine.filter((e) => DateTime.fromISO(e.startTime) < end && DateTime.fromISO(e.endTime) > start);
 
     const token = randomUUID();
@@ -344,6 +346,7 @@ const executeEventCreate: ToolDef = {
             updatedAt: hit.updatedAt,
           })
           .onConflictDoNothing();
+        bumpMirror();
       }
     }
 

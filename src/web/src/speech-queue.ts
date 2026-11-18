@@ -68,6 +68,8 @@ export function mergeShort(sentences: string[], minChars = 24): string[] {
 export interface SpeechQueueHooks {
   onFirstWord?: (msAfterStart: number) => void;
   onIdle?: () => void; // queue drained and input closed
+  /** A sentence has started playing (captions follow the voice). */
+  onSentence?: (text: string) => void;
 }
 
 /**
@@ -145,6 +147,7 @@ export class SpeechQueue {
       return;
     }
     this.playing = true;
+    this.hooks.onSentence?.(next);
     this.warmNext();
     void this.speakImpl(next, () => {
       this.playing = false;

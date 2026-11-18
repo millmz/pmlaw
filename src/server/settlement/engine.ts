@@ -3,6 +3,7 @@ import { DateTime } from 'luxon';
 import { classifyTask, FIRM_TZ } from '../../core/dates.js';
 import type { SmokeballClient } from '../../smokeball/client.js';
 import { schema, type Db } from '../db/index.js';
+import { bumpMirror, mirrorVersion } from '../db/mirror.js';
 import type { Citation } from '../tools/citations.js';
 import { cite } from '../tools/citations.js';
 import { guardModelFacts, type NoteInput, type NoteReader } from './note-reader.js';
@@ -272,6 +273,7 @@ async function fileSignals(
 const analysisCache = new Map<string, { key: string; summary: SettlementSummary | null }>();
 export function clearSettlementCache(): void {
   analysisCache.clear();
+  bumpMirror();
 }
 
 type Row<T extends keyof typeof schema & ('matters' | 'matterTypes' | 'events' | 'memos' | 'folders' | 'files' | 'tasks' | 'staff')> =
@@ -603,6 +605,7 @@ interface BoardRun {
   total: number;
 }
 let boardRun: BoardRun | null = null;
+const lastBoards = new WeakMap<object, { key: string; summaries: SettlementSummary[] }>();
 
 function startBoard(db: Db, client: SmokeballClient, nowIso?: string): BoardRun {
   const run: BoardRun = { promise: Promise.resolve([]), partial: [], done: 0, total: 0 };
@@ -696,6 +699,11 @@ export async function getSettlementBoard(
   nowIso?: string,
   maxWaitMs = Number.POSITIVE_INFINITY,
 ): Promise<BoardResult> {
+  // Nothing moved since the last complete board (same mirror, same day)?
+  // Then it is still the board.
+  const key = `${mirrorVersion()}:${(nowIso ? DateTime.fromISO(nowIso) : DateTime.now()).toISODate()}:${config.noteReader ? 'm' : '-'}`;
+  const last = lastBoards.get(db);
+  if (last && last.key === key) return { summaries: last.summaries, warming: false, done: last.summaries.length, total: last.summaries.length };
   const run = (boardRun ??= startBoard(db, client, nowIso));
   let timer: ReturnType<typeof setTimeout> | undefined;
   const timeout = Number.isFinite(maxWaitMs)
@@ -705,7 +713,10 @@ export async function getSettlementBoard(
     : null;
   try {
     const result = await (timeout ? Promise.race([run.promise, timeout]) : run.promise);
-    if (result) return { summaries: result, warming: false, done: run.total, total: run.total };
+    if (result) {
+      lastBoards.set(db, { key, summaries: result });
+      return { summaries: result, warming: false, done: run.total, total: run.total };
+    }
     return { summaries: rank(run.partial), warming: true, done: run.done, total: run.total };
   } finally {
     if (timer) clearTimeout(timer);
